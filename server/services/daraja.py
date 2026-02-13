@@ -1,191 +1,170 @@
-from __future__ import annotations
-from dotenv import load_dotenv
-load_dotenv()
+from flask import request
+from flask_restful import Resource
+from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from datetime import datetime, timezone, timedelta
-import base64
-import os
-import requests
-from typing import Optional, Tuple, Any, Dict
+from models import db, User, Project, Category
 
-SANDBOX_BASE_URL = "https://sandbox.safaricom.co.ke"
+# -------------------------
+# Helper functions
+# -------------------------
 
-# ---------------------------------------------
-# Environment Helpers
-# ---------------------------------------------
-def _get_env(name: str) -> Optional[str]:
-    """Get environment variable and return None if empty."""
-    v = os.getenv(name)
-    if v is None:
-        return None
-    v = v.strip()
-    if v == "" or v == "...":
-        return None
-    return v
-
-def _require_env() -> Tuple[str, str, str, str]:
-    """Fetch required M-Pesa environment variables. Raise error if missing."""
-    consumer_key = _get_env("MPESA_CONSUMER_KEY")
-    consumer_secret = _get_env("MPESA_CONSUMER_SECRET")
-    shortcode = _get_env("MPESA_SHORTCODE")
-    passkey = _get_env("MPESA_PASSKEY")
-
-    missing = []
-    if not consumer_key:
-        missing.append("MPESA_CONSUMER_KEY")
-    if not consumer_secret:
-        missing.append("MPESA_CONSUMER_SECRET")
-    if not shortcode:
-        missing.append("MPESA_SHORTCODE")
-    if not passkey:
-        missing.append("MPESA_PASSKEY")
-
-    if missing:
-        raise RuntimeError(f"Missing env vars: {', '.join(missing)}")
-
-    return consumer_key, consumer_secret, shortcode, passkey
-
-# ---------------------------------------------
-# JSON Helpers
-# ---------------------------------------------
-def _safe_json(res: requests.Response) -> Dict[str, Any]:
-    """Parse response as JSON. Raise error if not JSON."""
-    try:
-        data = res.json()
-        if isinstance(data, dict):
-            return data
-        return {"data": data}
-    except Exception:
-        preview = (res.text or "").strip()
-        if len(preview) > 1200:
-            preview = preview[:1200] + "…"
-        raise RuntimeError(
-            f"Safaricom returned non-JSON. HTTP {res.status_code}. "
-            f"Content-Type={res.headers.get('Content-Type')}. Body preview: {preview or '<empty body>'}"
-        )
-
-# ---------------------------------------------
-# OAuth / Token
-# ---------------------------------------------
-def get_access_token() -> str:
-    """Obtain OAuth access token from M-Pesa sandbox."""
-    consumer_key, consumer_secret, _, _ = _require_env()
-
-    url = f"{SANDBOX_BASE_URL}/oauth/v1/generate?grant_type=client_credentials"
-
-    res = requests.get(
-        url,
-        auth=(consumer_key, consumer_secret),
-        headers={"Accept": "application/json"},
-        timeout=30,
-    )
-
-    if res.status_code != 200:
-        body = (res.text or "").strip()
-        if len(body) > 1200:
-            body = body[:1200] + "…"
-        raise RuntimeError(f"OAuth failed. HTTP {res.status_code}. Body: {body or '<empty body>'}")
-
-    data = _safe_json(res)
-    token = data.get("access_token")
-    if not token:
-        raise RuntimeError(f"OAuth HTTP 200 but no access_token in response: {data}")
-
-    return str(token)
-
-# ---------------------------------------------
-# Phone Number Normalization
-# ---------------------------------------------
-def normalize_phone(phone: str) -> str:
-    """Normalize Kenyan phone numbers to 254XXXXXXXXX format."""
-    digits = "".join(c for c in str(phone) if c.isdigit())
-
-    if digits.startswith("0"):
-        digits = "254" + digits[1:]
-    if digits.startswith("7"):
-        digits = "254" + digits
-
-    if not digits.startswith("254") or len(digits) < 12:
-        raise ValueError(f"Invalid phone format after normalization: {digits}")
-
-    return digits
-
-# ---------------------------------------------
-# STK Push
-# ---------------------------------------------
-def stk_push(
-    phone: str,
-    amount: int,
-    callback_url: str,
-    account_ref: str
-) -> Dict[str, Any]:
+def require_admin():
     """
-    Initiate an STK push payment request to M-Pesa.
-
-    Args:
-        phone: Customer phone number (Kenya format)
-        amount: Payment amount (integer)
-        callback_url: Endpoint to receive payment confirmation
-        account_ref: Account reference for the transaction
+    Ensures the JWT identity matches a real user and that the user is an admin.
 
     Returns:
-        Dictionary with STK push response from M-Pesa
+        Tuple:
+            - User instance if valid admin
+            - None and an error dict with status code if invalid
     """
-    # Validate amount
-    if amount is None:
-        raise ValueError("Amount is required")
-    amount_int = int(amount)
-    if amount_int <= 0:
-        raise ValueError(f"Invalid amount: {amount_int} (must be > 0)")
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
 
-    # Validate callback
-    if not callback_url or not str(callback_url).startswith("http"):
-        raise ValueError("Invalid callback_url (must be an http/https URL)")
+    if not user:
+        # Invalid token
+        return None, ({"error": "Invalid token user. Please log in again."}, 401)
 
-    # Get access token
-    token = get_access_token()
-    _, _, shortcode, passkey = _require_env()
+    if not user.role or user.role.name != "admin":
+        # Not an admin
+        return None, ({"error": "Admin access required"}, 403)
 
-    # Generate password and timestamp
-    timestamp = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y%m%d%H%M%S")
-    password = base64.b64encode(f"{shortcode}{passkey}{timestamp}".encode()).decode()
+    return user, None
 
-    # Normalize phone
-    phone_norm = normalize_phone(phone)
 
-    # Payload for STK push
-    payload = {
-        "BusinessShortCode": shortcode,
-        "Password": password,
-        "Timestamp": timestamp,
-        "TransactionType": "CustomerPayBillOnline",
-        "Amount": amount_int,
-        "PartyA": phone_norm,
-        "PartyB": shortcode,
-        "PhoneNumber": phone_norm,
-        "CallBackURL": callback_url,
-        "AccountReference": str(account_ref),
-        "TransactionDesc": "Order Payment",
-    }
+# -------------------------
+# Category Resource
+# -------------------------
 
-    # Make STK push request
-    res = requests.post(
-        f"{SANDBOX_BASE_URL}/mpesa/stkpush/v1/processrequest",
-        json=payload,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        timeout=30,
-    )
+class CategoryCreate(Resource):
+    """Admin-only endpoint to create a new category"""
 
-    data = _safe_json(res)
+    @jwt_required()
+    def post(self):
+        """
+        Creates a category with a unique name.
+        Expects JSON: { "name": str, "description": str }
+        """
+        # Check admin privileges
+        user, err = require_admin()
+        if err:
+            return err
 
-    if res.status_code not in (200, 201):
-        raise RuntimeError(f"STK push HTTP {res.status_code}. Response: {data}")
+        data = request.get_json(silent=True) or {}
+        name = (data.get("name") or "").strip()
 
-    if str(data.get("ResponseCode", "")) != "0":
-        raise RuntimeError(f"STK push rejected. Response: {data}")
+        if not name:
+            return {"error": "Missing category name"}, 400
 
-    return data
+        # Prevent duplicates
+        if Category.query.filter_by(name=name).first():
+            return {"error": "Category already exists"}, 400
+
+        category = Category(
+            name=name,
+            description=(data.get("description") or "").strip()
+        )
+
+        db.session.add(category)
+        db.session.commit()
+
+        return {"message": f"Category '{category.name}' created"}, 201
+
+
+# -------------------------
+# Project Approval Resources
+# -------------------------
+
+class ApproveProject(Resource):
+    """Admin-only endpoint to approve a project"""
+
+    @jwt_required()
+    def post(self, project_id: int):
+        """
+        Approves a project.
+        Expects JSON: { "reason": str }
+        """
+        user, err = require_admin()
+        if err:
+            return err
+
+        project = Project.query.get(project_id)
+        if not project:
+            return {"error": "Project not found"}, 404
+
+        data = request.get_json(silent=True) or {}
+        reason = (data.get("reason") or "").strip()
+
+        project.status = "approved"
+        project.approval_reason = reason
+        db.session.commit()
+
+        return {
+            "message": f"Project '{project.title}' approved",
+            "reason": reason
+        }, 200
+
+
+class RejectProject(Resource):
+    """Admin-only endpoint to reject a project"""
+
+    @jwt_required()
+    def post(self, project_id: int):
+        """
+        Rejects a project.
+        Expects JSON: { "reason": str }
+        """
+        user, err = require_admin()
+        if err:
+            return err
+
+        project = Project.query.get(project_id)
+        if not project:
+            return {"error": "Project not found"}, 404
+
+        data = request.get_json(silent=True) or {}
+        reason = (data.get("reason") or "").strip()
+
+        project.status = "rejected"
+        project.rejection_reason = reason
+        db.session.commit()
+
+        return {
+            "message": f"Project '{project.title}' rejected",
+            "reason": reason
+        }, 200
+
+
+# -------------------------
+# Admin User List Resource
+# -------------------------
+
+class AdminUserList(Resource):
+    """Admin-only endpoint to list all users"""
+
+    @jwt_required()
+    def get(self):
+        """
+        Returns a list of all users with roles, status, and creation timestamp
+        """
+        user, err = require_admin()
+        if err:
+            return err
+
+        users = User.query.all()
+
+        return [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+                "role": u.role.name if u.role else None,
+                "status": u.status,
+                "created_at": u.created_at.isoformat()
+            }
+            for u in users
+        ], 200
+
+# -------------------------
+# End of server/admin.py
+# -------------------------
