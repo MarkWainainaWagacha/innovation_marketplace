@@ -3,23 +3,22 @@ from sqlalchemy import MetaData
 from datetime import datetime
 from sqlalchemy import UniqueConstraint
 
-# Version 1: initial setup, harmless comment
 metadata = MetaData()
 db = SQLAlchemy(metadata=metadata)
 
 
-class User(db.Model):
-    __tablename__ = 'users'
+class Merchandise(db.Model):
+    __tablename__ = "merchandise"
 
     id = db.Column(db.Integer, primary_key=True)
-    first_name = db.Column(db.String(50), nullable=False)
-    last_name = db.Column(db.String(50), nullable=False)
-    email = db.Column(db.String(255), nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    role_id = db.Column(db.Integer, db.ForeignKey("user_roles.id"), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    status = db.Column(db.String(50), default="active", nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(255), nullable=False)
+    price = db.Column(db.Numeric(10, 2), nullable=False)
+    stock = db.Column(db.Integer, nullable=False)
+    image_url = db.Column(db.String(255), nullable=False)
 
-    role = db.relationship("UserRole", back_populates="users")
-    projects = db.relationship("UserProject", back_populates="user")
-    orders = db.relationship("Order", back_populates="user")
+    orders = db.relationship("OrderMerchandise", back_populates="merchandise")
+
+    # harmless method added
+    def dummy_method_v3(self):
+        return f"{self.name} dummy"
