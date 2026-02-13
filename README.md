@@ -1,5 +1,6 @@
 # 🚀 Innovation Marketplace
 
+<<<<<<< HEAD
 A full-stack role-based marketplace platform connecting student innovators with recruiters through structured project showcasing and secure evaluation workflows.
 
 ---
@@ -13,11 +14,38 @@ Innovation Marketplace enables:
 - 🧑‍💼 Recruiters to discover vetted talent  
 - 🛍 Users to purchase official merchandise  
 - 💳 Secure payments via M-Pesa (Safaricom Daraja Sandbox)
+=======
+Innovation Marketplace is a full-stack web platform built to bridge the gap between student innovation and industry recruitment.
+
+This project demonstrates real-world implementation of authentication, role-based authorization, RESTful APIs, and payment gateway integration.
+
+---
+
+## Why This Project Matters
+
+Many student capstone projects remain unseen beyond academic institutions. This platform creates a structured, approval-driven system where:
+
+- Students showcase technical work
+- Admins ensure quality control
+- Recruiters discover vetted talent
+
+---
+
+## Key Highlights
+
+- Full-stack architecture (Next.js + Flask)
+- JWT authentication with role-based control
+- Admin approval workflow
+- Recruiter analytics dashboard
+- Secure M-Pesa STK Push integration
+- PostgreSQL production-ready setup
+>>>>>>> ea4bf2f (docs: enhance README with badges and project status section)
 
 ---
 
 ## 🌍 Live Deployment
 
+<<<<<<< HEAD
 - **Frontend:** _Add Vercel deployment link_  
 - **Backend API:** _Add Render deployment link_  
 
@@ -102,12 +130,64 @@ DATABASE_URL=
 - Node.js v18+  
 
 ### Steps
+=======
+Frontend → Next.js  
+Backend → Flask REST API  
+Database → PostgreSQL  
+Auth → NextAuth + JWT  
+Payments → M-Pesa Daraja Sandbox  
+
+---
+
+## Feature Breakdown
+
+### Authentication & Authorization
+- Role-protected routes
+- Server-side validation
+- Secure session handling
+
+### Project Management
+- Create, update, delete projects
+- Admin approval system
+- Controlled public visibility
+
+### Recruiter Dashboard
+- Approved projects only
+- Technology-based filtering
+- Student discovery system
+
+### Merchandise & Payments
+- Cart system
+- Order tracking
+- STK Push payment integration
+
+---
+
+## Local Setup
+
+```bash
+git clone <repo-url>
+cd innovation_marketplace
+```
+
+Backend:
+
+```bash
+cd server
+pipenv install
+flask run
+```
+
+Frontend:
+
+>>>>>>> ea4bf2f (docs: enhance README with badges and project status section)
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
+<<<<<<< HEAD
 Create a `.env.local` file inside `/frontend`:
 ```
 NEXT_PUBLIC_API_URL=http://localhost:5000
@@ -226,3 +306,28 @@ This project was developed as part of the **Moringa Innovation Marketplace Proje
 
 Developed for academic purposes.  
 This is a Moringa Innovation Marketplace project.
+=======
+---
+
+## Learning Outcomes
+
+- REST API design
+- Secure authentication systems
+- Payment integration
+- Database modeling
+- Production-ready deployment structure
+
+---
+
+## Contributors
+
+- Joshua Imbusi  
+- Ruth Jelagat  
+- Castro Kimaru  
+- Grace Odongo  
+- Mark Wagacha  
+
+---
+
+Academic project — Portfolio Ready.
+>>>>>>> ea4bf2f (docs: enhance README with badges and project status section)
