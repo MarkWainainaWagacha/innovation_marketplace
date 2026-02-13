@@ -7,18 +7,16 @@ metadata = MetaData()
 db = SQLAlchemy(metadata=metadata)
 
 
-class Merchandise(db.Model):
-    __tablename__ = "merchandise"
+class Project(db.Model):
+    __tablename__ = "projects"
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    description = db.Column(db.String(255), nullable=False)
-    price = db.Column(db.Numeric(10, 2), nullable=False)
-    stock = db.Column(db.Integer, nullable=False)
-    image_url = db.Column(db.String(255), nullable=False)
-
-    orders = db.relationship("OrderMerchandise", back_populates="merchandise")
-
-    # harmless method added
-    def dummy_method_v3(self):
-        return f"{self.name} dummy"
+    description = db.Column(db.String(500), nullable=False)
+    title = db.Column(db.String(50), nullable=False)
+    video = db.Column(db.String(255), nullable=False)
+    github_url = db.Column(db.String(255), nullable=False)
+    technologies = db.Column(db.String(255), nullable=False)
+    submitted_name = db.Column(db.String(100), nullable=False)
+    thumbnail_url = db.Column(db.String(255), nullable=True)
+    status = db.Column(db.String(50), default="pending")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
