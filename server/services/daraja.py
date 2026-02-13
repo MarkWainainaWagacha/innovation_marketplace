@@ -10,9 +10,11 @@ from typing import Optional, Tuple, Any, Dict
 
 SANDBOX_BASE_URL = "https://sandbox.safaricom.co.ke"
 
-
+# ---------------------------------------------
+# Environment Helpers
+# ---------------------------------------------
 def _get_env(name: str) -> Optional[str]:
-   
+    """Get environment variable and return None if empty."""
     v = os.getenv(name)
     if v is None:
         return None
@@ -22,6 +24,7 @@ def _get_env(name: str) -> Optional[str]:
     return v
 
 def _require_env() -> Tuple[str, str, str, str]:
+    """Fetch required M-Pesa environment variables. Raise error if missing."""
     consumer_key = _get_env("MPESA_CONSUMER_KEY")
     consumer_secret = _get_env("MPESA_CONSUMER_SECRET")
     shortcode = _get_env("MPESA_SHORTCODE")
@@ -42,14 +45,15 @@ def _require_env() -> Tuple[str, str, str, str]:
 
     return consumer_key, consumer_secret, shortcode, passkey
 
-
+# ---------------------------------------------
+# JSON Helpers
+# ---------------------------------------------
 def _safe_json(res: requests.Response) -> Dict[str, Any]:
-   
+    """Parse response as JSON. Raise error if not JSON."""
     try:
         data = res.json()
         if isinstance(data, dict):
             return data
-
         return {"data": data}
     except Exception:
         preview = (res.text or "").strip()
@@ -60,7 +64,11 @@ def _safe_json(res: requests.Response) -> Dict[str, Any]:
             f"Content-Type={res.headers.get('Content-Type')}. Body preview: {preview or '<empty body>'}"
         )
 
+# ---------------------------------------------
+# OAuth / Token
+# ---------------------------------------------
 def get_access_token() -> str:
+    """Obtain OAuth access token from M-Pesa sandbox."""
     consumer_key, consumer_secret, _, _ = _require_env()
 
     url = f"{SANDBOX_BASE_URL}/oauth/v1/generate?grant_type=client_credentials"
@@ -79,19 +87,21 @@ def get_access_token() -> str:
         raise RuntimeError(f"OAuth failed. HTTP {res.status_code}. Body: {body or '<empty body>'}")
 
     data = _safe_json(res)
-
     token = data.get("access_token")
     if not token:
         raise RuntimeError(f"OAuth HTTP 200 but no access_token in response: {data}")
 
     return str(token)
 
+# ---------------------------------------------
+# Phone Number Normalization
+# ---------------------------------------------
 def normalize_phone(phone: str) -> str:
+    """Normalize Kenyan phone numbers to 254XXXXXXXXX format."""
     digits = "".join(c for c in str(phone) if c.isdigit())
 
     if digits.startswith("0"):
         digits = "254" + digits[1:]
-
     if digits.startswith("7"):
         digits = "254" + digits
 
@@ -100,26 +110,50 @@ def normalize_phone(phone: str) -> str:
 
     return digits
 
+# ---------------------------------------------
+# STK Push
+# ---------------------------------------------
+def stk_push(
+    phone: str,
+    amount: int,
+    callback_url: str,
+    account_ref: str
+) -> Dict[str, Any]:
+    """
+    Initiate an STK push payment request to M-Pesa.
 
-def stk_push(phone: str, amount: int, callback_url: str, account_ref: str) -> Dict[str, Any]:
-   
+    Args:
+        phone: Customer phone number (Kenya format)
+        amount: Payment amount (integer)
+        callback_url: Endpoint to receive payment confirmation
+        account_ref: Account reference for the transaction
+
+    Returns:
+        Dictionary with STK push response from M-Pesa
+    """
+    # Validate amount
     if amount is None:
         raise ValueError("Amount is required")
     amount_int = int(amount)
     if amount_int <= 0:
         raise ValueError(f"Invalid amount: {amount_int} (must be > 0)")
 
+    # Validate callback
     if not callback_url or not str(callback_url).startswith("http"):
         raise ValueError("Invalid callback_url (must be an http/https URL)")
 
+    # Get access token
     token = get_access_token()
     _, _, shortcode, passkey = _require_env()
 
+    # Generate password and timestamp
     timestamp = (datetime.now(timezone.utc) + timedelta(hours=3)).strftime("%Y%m%d%H%M%S")
     password = base64.b64encode(f"{shortcode}{passkey}{timestamp}".encode()).decode()
 
+    # Normalize phone
     phone_norm = normalize_phone(phone)
 
+    # Payload for STK push
     payload = {
         "BusinessShortCode": shortcode,
         "Password": password,
@@ -134,6 +168,7 @@ def stk_push(phone: str, amount: int, callback_url: str, account_ref: str) -> Di
         "TransactionDesc": "Order Payment",
     }
 
+    # Make STK push request
     res = requests.post(
         f"{SANDBOX_BASE_URL}/mpesa/stkpush/v1/processrequest",
         json=payload,
