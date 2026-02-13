@@ -7,16 +7,21 @@ metadata = MetaData()
 db = SQLAlchemy(metadata=metadata)
 
 
-class Project(db.Model):
-    __tablename__ = "projects"
+class ProjectLike(db.Model):
+    __tablename__ = "project_likes"
 
     id = db.Column(db.Integer, primary_key=True)
-    description = db.Column(db.String(500), nullable=False)
-    title = db.Column(db.String(50), nullable=False)
-    video = db.Column(db.String(255), nullable=False)
-    github_url = db.Column(db.String(255), nullable=False)
-    technologies = db.Column(db.String(255), nullable=False)
-    submitted_name = db.Column(db.String(100), nullable=False)
-    thumbnail_url = db.Column(db.String(255), nullable=True)
-    status = db.Column(db.String(50), default="pending")
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship("User")
+    project = db.relationship("Project")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "project_id", name="uq_user_project_like"),
+    )
+
+    # harmless dummy method
+    def dummy_method_v6(self):
+        return "This is harmless v6"
