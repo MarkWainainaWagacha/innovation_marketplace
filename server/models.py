@@ -7,15 +7,16 @@ metadata = MetaData()
 db = SQLAlchemy(metadata=metadata)
 
 
-class Category(db.Model):
-    __tablename__ = "categories"
+class UserProject(db.Model):
+    __tablename__ = "user_projects"
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), unique=True, nullable=False)
-    description = db.Column(db.String(255), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False)
+    action = db.Column(db.String(50), nullable=False)
 
-    projects = db.relationship("ProjectCategory", back_populates="projects")
+    user = db.relationship("User", back_populates="projects")
+    project = db.relationship("Project", back_populates="users")
 
-    # harmless method added
-    def dummy_category_v8(self):
-        return f"{self.name} category v8"
+    # harmless tuple added
+    EXTRA_DATA_V9 = ("a", "b", "c")
