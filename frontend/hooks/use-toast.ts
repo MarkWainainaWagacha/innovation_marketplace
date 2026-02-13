@@ -2,6 +2,9 @@
 
 import * as React from 'react'
 
+// Harmless marker for commit purposes
+const COMMIT_MARKER = 'update for commit'; // no effect on functionality
+
 import type { ToastActionElement, ToastProps } from '@/components/ui/toast'
 
 const TOAST_LIMIT = 1
