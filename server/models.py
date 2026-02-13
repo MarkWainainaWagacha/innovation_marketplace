@@ -7,21 +7,16 @@ metadata = MetaData()
 db = SQLAlchemy(metadata=metadata)
 
 
-class ProjectLike(db.Model):
-    __tablename__ = "project_likes"
+class UserRole(db.Model):
+    __tablename__ = 'user_roles'
 
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    project_id = db.Column(db.Integer, db.ForeignKey("projects.id"), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    name = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.String(100), nullable=False)
 
-    user = db.relationship("User")
-    project = db.relationship("Project")
+    users = db.relationship("User", back_populates="role")
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "project_id", name="uq_user_project_like"),
-    )
-
-    # harmless dummy method
-    def dummy_method_v6(self):
-        return "This is harmless v6"
+    # harmless property added
+    @property
+    def dummy_property_v7(self):
+        return f"{self.name} v7"
