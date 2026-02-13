@@ -1,5 +1,5 @@
-# 🚀 Innovation Marketplace
 
+<<<<<<< HEAD
 <<<<<<< HEAD
 A full-stack role-based marketplace platform connecting student innovators with recruiters through structured project showcasing and secure evaluation workflows.
 
@@ -16,23 +16,27 @@ Innovation Marketplace enables:
 - 💳 Secure payments via M-Pesa (Safaricom Daraja Sandbox)
 =======
 Innovation Marketplace is a full-stack web platform built to bridge the gap between student innovation and industry recruitment.
+=======
+# Innovation Marketplace
+>>>>>>> 7d41a71 (docs: enhance README with badges and project status section)
 
-This project demonstrates real-world implementation of authentication, role-based authorization, RESTful APIs, and payment gateway integration.
-
----
-
-## Why This Project Matters
-
-Many student capstone projects remain unseen beyond academic institutions. This platform creates a structured, approval-driven system where:
-
-- Students showcase technical work
-- Admins ensure quality control
-- Recruiters discover vetted talent
+Full-stack application implementing a role-based project marketplace with recruiter discovery tools and integrated payment processing.
 
 ---
 
-## Key Highlights
+## System Design
 
+The system follows a decoupled client-server architecture:
+
+Client (Next.js) ↔ REST API (Flask) ↔ Database (PostgreSQL)
+
+Authentication is handled via NextAuth (frontend) and JWT verification (backend).
+
+---
+
+## Modules
+
+<<<<<<< HEAD
 - Full-stack architecture (Next.js + Flask)
 - JWT authentication with role-based control
 - Admin approval workflow
@@ -136,49 +140,65 @@ Backend → Flask REST API
 Database → PostgreSQL  
 Auth → NextAuth + JWT  
 Payments → M-Pesa Daraja Sandbox  
+=======
+### 1. Authentication Module
+- User registration
+- Login
+- Role assignment
+- JWT token verification
+
+### 2. Project Module
+- CRUD operations
+- Approval flag
+- Technology tagging
+- Category classification
+
+### 3. Recruiter Module
+- Approved project access
+- Technology filtering
+- Search queries
+
+### 4. Payment Module
+- M-Pesa STK Push request
+- Token generation
+- Order creation
+- Payment confirmation handling
 
 ---
 
-## Feature Breakdown
+## Database Models
 
-### Authentication & Authorization
-- Role-protected routes
-- Server-side validation
-- Secure session handling
-
-### Project Management
-- Create, update, delete projects
-- Admin approval system
-- Controlled public visibility
-
-### Recruiter Dashboard
-- Approved projects only
-- Technology-based filtering
-- Student discovery system
-
-### Merchandise & Payments
-- Cart system
-- Order tracking
-- STK Push payment integration
+- User
+- Project
+- Category
+- Technology
+- Order
+- Merchandise
+>>>>>>> 7d41a71 (docs: enhance README with badges and project status section)
 
 ---
 
-## Local Setup
+## API Security
 
-```bash
-git clone <repo-url>
-cd innovation_marketplace
-```
+- JWT-based route protection
+- Role-based authorization middleware
+- Environment variable isolation
+- CORS configuration
 
-Backend:
+---
+
+## Setup Instructions
+
+### Backend
 
 ```bash
 cd server
 pipenv install
+flask db upgrade
 flask run
 ```
 
-Frontend:
+### Frontend
 
 >>>>>>> ea4bf2f (docs: enhance README with badges and project status section)
 ```bash
@@ -309,18 +329,19 @@ This is a Moringa Innovation Marketplace project.
 =======
 ---
 
-## Learning Outcomes
+## Production Notes
 
-- REST API design
-- Secure authentication systems
-- Payment integration
-- Database modeling
-- Production-ready deployment structure
+- Use PostgreSQL
+- Set secure JWT secret
+- Configure environment variables
+- Enable HTTPS
+- Restrict CORS origins
 
 ---
 
-## Contributors
+## License
 
+<<<<<<< HEAD
 - Joshua Imbusi  
 - Ruth Jelagat  
 - Castro Kimaru  
@@ -331,3 +352,6 @@ This is a Moringa Innovation Marketplace project.
 
 Academic project — Portfolio Ready.
 >>>>>>> ea4bf2f (docs: enhance README with badges and project status section)
+=======
+Academic use only.
+>>>>>>> 7d41a71 (docs: enhance README with badges and project status section)
