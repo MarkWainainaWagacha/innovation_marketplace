@@ -7,16 +7,15 @@ metadata = MetaData()
 db = SQLAlchemy(metadata=metadata)
 
 
-class UserRole(db.Model):
-    __tablename__ = 'user_roles'
+class Category(db.Model):
+    __tablename__ = "categories"
 
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), nullable=False)
-    description = db.Column(db.String(100), nullable=False)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+    description = db.Column(db.String(255), nullable=False)
 
-    users = db.relationship("User", back_populates="role")
+    projects = db.relationship("ProjectCategory", back_populates="projects")
 
-    # harmless property added
-    @property
-    def dummy_property_v7(self):
-        return f"{self.name} v7"
+    # harmless method added
+    def dummy_category_v8(self):
+        return f"{self.name} category v8"
