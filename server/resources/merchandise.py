@@ -1,10 +1,11 @@
 import logging
+from flask import request
 from flask_restful import Resource
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, Merchandise, User
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("merchandise_v3")
+logger = logging.getLogger("merchandise_v4")
 
 def require_admin():
     raw_id = get_jwt_identity()
@@ -17,13 +18,15 @@ def require_admin():
         return None, ({"error": "Admin access required"}, 403)
     return user, None
 
-class MerchandiseListV3(Resource):
+class MerchandiseStats(Resource):
+    @jwt_required()
     def get(self):
-        items = Merchandise.query.filter(Merchandise.stock > 0).all()
-        return [
-            {"id": m.id, "name": m.name, "price": float(m.price), "stock": m.stock}
-            for m in items
-        ], 200
+        items = Merchandise.query.all()
+        total_value = sum((m.price or 0) * (m.stock or 0) for m in items)
+        return {
+            "total_items": len(items),
+            "total_inventory_value": total_value
+        }, 200
 
     @jwt_required()
     def post(self):
@@ -42,29 +45,3 @@ class MerchandiseListV3(Resource):
         db.session.commit()
         logger.info(f"Merchandise added: {item.name}")
         return {"message": "Merchandise added"}, 201
-
-class MerchandiseItemV3(Resource):
-    @jwt_required()
-    def patch(self, id):
-        user, err = require_admin()
-        if err:
-            return err
-        item = Merchandise.query.get_or_404(id)
-        data = request.get_json(silent=True) or {}
-        for key in ["stock", "price"]:
-            if key in data:
-                setattr(item, key, data[key])
-        db.session.commit()
-        logger.info(f"Merchandise updated: {item.name}")
-        return {"message": "Merchandise updated"}, 200
-
-    @jwt_required()
-    def delete(self, id):
-        user, err = require_admin()
-        if err:
-            return err
-        item = Merchandise.query.get_or_404(id)
-        db.session.delete(item)
-        db.session.commit()
-        logger.info(f"Merchandise deleted: {item.name}")
-        return {"message": "Merchandise deleted"}, 200
