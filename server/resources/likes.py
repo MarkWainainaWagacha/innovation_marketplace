@@ -1,11 +1,10 @@
 import logging
-from flask import request
 from flask_restful import Resource
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, Like, User
+from models import Like, User
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("likes_v3")
+logger = logging.getLogger("likes_v4")
 
 def require_user():
     raw_id = get_jwt_identity()
@@ -18,24 +17,14 @@ def require_user():
         return None, ({"error": "User not found"}, 404)
     return user, None
 
-class LikeToggle(Resource):
+class LikesByUser(Resource):
     @jwt_required()
-    def post(self):
-        user, err = require_user()
-        if err:
-            return err
-        data = request.get_json(silent=True) or {}
-        post_id = data.get("post_id")
-        if not post_id:
-            return {"error": "post_id is required"}, 400
-        existing = Like.query.filter_by(user_id=user.id, post_id=post_id).first()
-        if existing:
-            db.session.delete(existing)
-            db.session.commit()
-            logger.info(f"User {user.id} unliked post {post_id}")
-            return {"message": "Post unliked"}, 200
-        like = Like(user_id=user.id, post_id=post_id)
-        db.session.add(like)
-        db.session.commit()
-        logger.info(f"User {user.id} liked post {post_id}")
-        return {"message": "Post liked"}, 201
+    
+    def get(self, user_id=None):
+        if not user_id:
+            user, err = require_user()
+            if err:
+                return err
+            user_id = user.id
+        likes = Like.query.filter_by(user_id=user_id).all()
+        return [{"id": l.id, "post_id": l.post_id} for l in likes], 200
