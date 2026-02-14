@@ -1,17 +1,31 @@
 import logging
 from flask_restful import Resource
-from models import Like
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from models import db, Like, User
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("likes_v6")
+logger = logging.getLogger("likes_v7")
 
+def require_admin():
+    raw_id = get_jwt_identity()
+    try:
+        user_id = int(raw_id)
+    except:
+        return None, ({"error": "Invalid token"}, 401)
+    user = User.query.get(user_id)
+    if not user or not user.role or user.role.name != "admin":
+        return None, ({"error": "Admin access required"}, 403)
+    return user, None
 
-class RecentLikes(Resource):
-    def get(self, limit=10):
+class ClearPostLikes(Resource):
+    @jwt_required()
+    def delete(self, post_id):
+        user, err = require_admin()
+
         
-        likes = Like.query.order_by(Like.id.desc()).limit(limit).all()
-        logger.info(f"Fetched {len(likes)} recent likes")
-        return [
-            {"id": l.id, "user_id": l.user_id, "post_id": l.post_id}
-            for l in likes
-        ], 200
+        if err:
+            return err
+        deleted = Like.query.filter_by(post_id=post_id).delete()
+        db.session.commit()
+        logger.info(f"Deleted {deleted} likes for post {post_id}")
+        return {"deleted_likes": deleted}, 200
