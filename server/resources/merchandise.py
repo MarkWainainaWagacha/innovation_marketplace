@@ -5,7 +5,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, Merchandise, User
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("merchandise_v5")
+logger = logging.getLogger("merchandise_v6")
 
 def require_admin():
     raw_id = get_jwt_identity()
@@ -18,21 +18,21 @@ def require_admin():
         return None, ({"error": "Admin access required"}, 403)
     return user, None
 
-class MerchandiseCreate(Resource):
+class MerchandiseStock(Resource):
     @jwt_required()
-    def post(self):
+    def patch(self, id):
         user, err = require_admin()
         if err:
             return err
+        item = Merchandise.query.get_or_404(id)
         data = request.get_json(silent=True) or {}
-        item = Merchandise(
-            name=data.get("name", "").strip(),
-            description=data.get("description", "").strip(),
-            price=data.get("price", 0),
-            stock=data.get("stock", 0),
-            image_url=data.get("image_url", "").strip()
-        )
-        db.session.add(item)
-        db.session.commit()
-        logger.info(f"Merchandise created: {item.name}")
-        return {"message": "Merchandise created"}, 201
+        if "stock" in data:
+            item.stock = data["stock"]
+            db.session.commit()
+            logger.info(f"Stock updated: {item.name} -> {item.stock}")
+        return {"id": item.id, "stock": item.stock}, 200
+
+    @jwt_required()
+    def get(self):
+        items = Merchandise.query.all()
+        return [{"id": m.id, "stock": m.stock} for m in items], 200
