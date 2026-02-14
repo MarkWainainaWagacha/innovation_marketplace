@@ -4,7 +4,6 @@ from flask_restful import Resource
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, Merchandise, User, OrderMerchandise
 
-# Setup basic logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("merchandise_v1")
 
@@ -13,15 +12,11 @@ def require_admin():
     try:
         user_id = int(raw_id)
     except (TypeError, ValueError):
-        logger.warning("Invalid token identity")
         return None, ({"error": "Invalid token identity"}, 401)
-
     user = User.query.get(user_id)
     if not user or not user.role or user.role.name != "admin":
         return None, ({"error": "Admin access required"}, 403)
-
     return user, None
-
 
 def float_price(p):
     try:
@@ -29,10 +24,8 @@ def float_price(p):
     except (TypeError, ValueError):
         return 0.0
 
-
 class MerchandiseList(Resource):
     def get(self):
-        logger.info("Fetching all merchandise")
         items = Merchandise.query.all()
         return [
             {
@@ -50,7 +43,6 @@ class MerchandiseList(Resource):
         user, err = require_admin()
         if err:
             return err
-
         data = request.get_json(silent=True) or {}
         item = Merchandise(
             name=str(data.get("name")).strip(),
@@ -64,14 +56,12 @@ class MerchandiseList(Resource):
         logger.info(f"Merchandise added: {item.name}")
         return {"message": "Merchandise added"}, 201
 
-
 class MerchandiseItem(Resource):
     @jwt_required()
     def patch(self, id):
         user, err = require_admin()
         if err:
             return err
-
         item = Merchandise.query.get_or_404(id)
         data = request.get_json(silent=True) or {}
         for key in ["name", "description", "price", "stock", "image_url"]:
