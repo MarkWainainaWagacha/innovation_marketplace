@@ -1,41 +1,28 @@
 import logging
-from flask import request
 from flask_restful import Resource
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import db, Merchandise, User, OrderMerchandise
+from models import db, Merchandise, User
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("merchandise_v1")
+logger = logging.getLogger("merchandise_v3")
 
 def require_admin():
     raw_id = get_jwt_identity()
     try:
         user_id = int(raw_id)
-    except (TypeError, ValueError):
+    except:
         return None, ({"error": "Invalid token identity"}, 401)
     user = User.query.get(user_id)
     if not user or not user.role or user.role.name != "admin":
         return None, ({"error": "Admin access required"}, 403)
     return user, None
 
-def float_price(p):
-    try:
-        return float(p)
-    except (TypeError, ValueError):
-        return 0.0
-
-class MerchandiseList(Resource):
+class MerchandiseListV3(Resource):
     def get(self):
-        items = Merchandise.query.all()
+        items = Merchandise.query.filter(Merchandise.stock > 0).all()
         return [
-            {
-                "id": m.id,
-                "name": m.name,
-                "description": m.description,
-                "price": float_price(m.price),
-                "stock": m.stock,
-                "image_url": m.image_url
-            } for m in items
+            {"id": m.id, "name": m.name, "price": float(m.price), "stock": m.stock}
+            for m in items
         ], 200
 
     @jwt_required()
@@ -45,18 +32,18 @@ class MerchandiseList(Resource):
             return err
         data = request.get_json(silent=True) or {}
         item = Merchandise(
-            name=str(data.get("name")).strip(),
-            description=(data.get("description") or "").strip(),
-            price=data.get("price"),
-            stock=data.get("stock"),
-            image_url=(data.get("image_url") or "").strip()
+            name=data.get("name", "").strip(),
+            description=data.get("description", "").strip(),
+            price=data.get("price", 0),
+            stock=data.get("stock", 0),
+            image_url=data.get("image_url", "").strip()
         )
         db.session.add(item)
         db.session.commit()
         logger.info(f"Merchandise added: {item.name}")
         return {"message": "Merchandise added"}, 201
 
-class MerchandiseItem(Resource):
+class MerchandiseItemV3(Resource):
     @jwt_required()
     def patch(self, id):
         user, err = require_admin()
@@ -64,7 +51,7 @@ class MerchandiseItem(Resource):
             return err
         item = Merchandise.query.get_or_404(id)
         data = request.get_json(silent=True) or {}
-        for key in ["name", "description", "price", "stock", "image_url"]:
+        for key in ["stock", "price"]:
             if key in data:
                 setattr(item, key, data[key])
         db.session.commit()
@@ -77,7 +64,6 @@ class MerchandiseItem(Resource):
         if err:
             return err
         item = Merchandise.query.get_or_404(id)
-        OrderMerchandise.query.filter_by(merchandise_id=item.id).delete(synchronize_session=False)
         db.session.delete(item)
         db.session.commit()
         logger.info(f"Merchandise deleted: {item.name}")
