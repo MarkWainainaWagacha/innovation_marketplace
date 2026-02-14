@@ -1,20 +1,16 @@
 import logging
 from flask_restful import Resource
-from sqlalchemy import func
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, Like
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("likes_v12")
+logger = logging.getLogger("likes_v13")
 
-class TrendingPosts(Resource):
-    def get(self):
-        results = db.session.query(
-            Like.post_id,
-            func.count(Like.id).label("count")
-        ).group_by(Like.post_id)\
-         .order_by(func.count(Like.id).desc())\
-         .limit(3).all()
-
-        trending = [{"post_id": r.post_id, "likes": r.count} for r in results]
-        logger.info("Fetched trending posts")
-        return trending, 200
+class UnlikeAll(Resource):
+    @jwt_required()
+    def delete(self):
+        user_id = int(get_jwt_identity())
+        deleted = Like.query.filter_by(user_id=user_id).delete()
+        db.session.commit()
+        logger.info(f"User {user_id} removed all likes ({deleted})")
+        return {"likes_removed": deleted}, 200
