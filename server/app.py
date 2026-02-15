@@ -5,7 +5,7 @@ import os
 import time
 import signal
 import sys
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_migrate import Migrate
 from flask_restful import Api
 from flask_cors import CORS
@@ -89,11 +89,13 @@ def create_app():
     @app.route("/health", methods=["GET"])
     def health_check():
         uptime = time.time() - getattr(app, "start_time", time.time())
+        avg_durations = {k: round(sum(v)/len(v), 3) for k,v in getattr(app, "endpoint_times", {}).items()}
         return jsonify({
             "status": "ok",
             "uptime_seconds": round(uptime, 2),
             "database": "connected" if db.engine else "disconnected",
-            "environment": env
+            "environment": env,
+            "avg_request_durations": avg_durations
         })
 
     # Root endpoint
@@ -103,21 +105,26 @@ def create_app():
 
     # Start time for uptime metrics
     app.start_time = time.time()
+    app.endpoint_times = {}  # Stores duration lists per endpoint
 
-    # Request timer for logging
+    # Request timer for logging and performance tracking
     @app.before_request
     def start_timer():
-        request.start_time = time.time()
+        g.start_time = time.time()
 
-    # Request + response logging with duration
     @app.after_request
     def log_request(response):
-        duration = time.time() - request.start_time
+        duration = time.time() - g.start_time
         method = request.method
         path = request.path
         status = response.status_code
         ip = request.remote_addr
         app.logger.info(f"{ip} {method} {path} -> {status} ({duration:.3f}s)")
+
+        # Store duration per endpoint
+        if path not in app.endpoint_times:
+            app.endpoint_times[path] = []
+        app.endpoint_times[path].append(duration)
         return response
 
     # API key protection middleware
@@ -144,45 +151,4 @@ def create_app():
         times = request_times.get(ip, [])
         times = [t for t in times if now - t < window]
         if len(times) >= max_requests:
-            return jsonify({"error": "Too many requests"}), 429
-        times.append(now)
-        request_times[ip] = times
-
-    # Request validation for JSON body in POST/PUT requests
-    @app.before_request
-    def validate_json_body():
-        if request.method in ["POST", "PUT"] and request.path not in ["/", "/health"]:
-            if not request.is_json:
-                return jsonify({"error": "Request body must be JSON"}), 400
-
-    # JWT token refresh endpoint
-    @app.route("/token/refresh", methods=["POST"])
-    @jwt_required(refresh=True)
-    def refresh_token():
-        identity = get_jwt_identity()
-        new_token = create_access_token(identity=identity)
-        return {"access_token": new_token}, 200
-
-    # Global exception handler for structured JSON errors
-    @app.errorhandler(Exception)
-    def handle_exception(e):
-        code = getattr(e, "code", 500)
-        message = getattr(e, "description", str(e))
-        return jsonify({"error": message, "status_code": code}), code
-
-    # Graceful shutdown handler
-    def shutdown_signal_handler(signum, frame):
-        app.logger.info(f"Received signal {signum}. Shutting down gracefully...")
-        # Cleanup logic can go here if needed
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, shutdown_signal_handler)
-    signal.signal(signal.SIGTERM, shutdown_signal_handler)
-
-    return app
-
-
-app = create_app()
-
-if __name__ == "__main__":
-    app.run(port=5555, debug=True)
+            return json
