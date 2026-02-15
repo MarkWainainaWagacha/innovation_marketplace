@@ -41,61 +41,6 @@ def create_app():
     Migrate(app, db)
     JWTManager(app)
 
-    # ✅ CORS for multiple frontend origins
+    # CORS
     CORS(app, supports_credentials=True, origins=[
         "http://localhost:3000",
-        "http://localhost:3001"
-    ])
-
-    # Initialize API
-    api = Api(app)
-
-    # Register resources
-
-    # Auth
-    api.add_resource(Signup, "/signup")
-    api.add_resource(Login, "/login")
-    api.add_resource(UpdateProfile, "/profile")
-
-    # Projects
-    api.add_resource(ProjectList, "/projects")
-    api.add_resource(ProjectDetail, "/projects/<int:project_id>")
-    api.add_resource(ProjectContactTeam, "/projects/<int:project_id>/contact")
-    api.add_resource(ProjectLikeToggle, "/projects/<int:project_id>/like")
-
-    # Merchandise
-    api.add_resource(MerchandiseList, "/merchandise")
-    api.add_resource(MerchandiseItem, "/merchandise/<int:id>")
-
-    # Orders
-    api.add_resource(OrderCreate, "/orders")
-    api.add_resource(OrderDelete, "/orders/<int:order_id>")
-
-    # Admin
-    api.add_resource(CategoryCreate, "/admin/categories")
-    api.add_resource(ApproveProject, "/admin/projects/<int:project_id>/approve")
-    api.add_resource(RejectProject, "/admin/projects/<int:project_id>/reject")
-    api.add_resource(AdminUserList, "/admin/users")
-
-    # Users
-    api.add_resource(UserList, "/users")
-    api.add_resource(UserContact, "/users/<int:user_id>/contact")
-
-    # Recruiters
-    api.add_resource(BrowseProjects, "/recruiters/projects")
-
-    # Mpesa
-    api.add_resource(MpesaPay, "/mpesa/pay")
-    api.add_resource(MpesaCallback, "/mpesa/callback")
-
-    @app.route("/")
-    def home():
-        return {"status": "API running"}, 200
-
-    return app
-
-
-app = create_app()
-
-if __name__ == "__main__":
-    app.run(port=5555, debug=True)
