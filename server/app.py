@@ -77,24 +77,20 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ Simple rate-limiting middleware (per IP)
-    request_times = {}
-
+    # ✅ Request + Response logging with duration
     @app.before_request
-    def limit_requests():
+    def start_timer():
+        request.start_time = time.time()
+
+    @app.after_request
+    def log_request(response):
+        duration = time.time() - request.start_time
+        method = request.method
+        path = request.path
+        status = response.status_code
         ip = request.remote_addr
-        now = time.time()
-        window = 60  # seconds
-        max_requests = 30  # max requests per window
-
-        times = request_times.get(ip, [])
-        # Remove old requests outside the window
-        times = [t for t in times if now - t < window]
-        if len(times) >= max_requests:
-            return jsonify({"error": "Too many requests"}), 429
-
-        times.append(now)
-        request_times[ip] = times
+        app.logger.info(f"{ip} {method} {path} -> {status} ({duration:.3f}s)")
+        return response
 
     return app
 
