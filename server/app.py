@@ -6,7 +6,7 @@ from flask import Flask, request, jsonify
 from flask_migrate import Migrate
 from flask_restful import Api
 from flask_cors import CORS
-from flask_jwt_extended import JWTManager
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from models import db
 
 from resources.mpesa import MpesaPay, MpesaCallback
@@ -76,16 +76,24 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ Simple API key protection middleware
+    # ✅ API key protection middleware
     @app.before_request
     def check_api_key():
-        # Skip for root
-        if request.path == "/":
+        # Skip root and token refresh route
+        if request.path in ["/", "/token/refresh"]:
             return
         api_key = request.headers.get("X-API-KEY")
         valid_key = os.getenv("API_KEY", "dev-key")
         if api_key != valid_key:
             return jsonify({"error": "Invalid API key"}), 401
+
+    # ✅ JWT token refresh endpoint
+    @app.route("/token/refresh", methods=["POST"])
+    @jwt_required(refresh=True)
+    def refresh_token():
+        identity = get_jwt_identity()
+        new_token = create_access_token(identity=identity)
+        return {"access_token": new_token}, 200
 
     return app
 
