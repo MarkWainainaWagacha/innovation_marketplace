@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-from flask import Flask
+from flask import Flask, Blueprint
 from flask_migrate import Migrate
 from flask_restful import Api
 from flask_cors import CORS
@@ -19,63 +19,70 @@ from resources.recruiters import BrowseProjects
 from resources.likes import ProjectLikeToggle
 from resources.users import UserList, UserContact
 
+def create_app():
+    app = Flask(__name__)
 
-def configure_app(app):
+    # Configuration
     database_url = os.getenv("DATABASE_URL", "")
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql://", 1)
-
-    app.config["SQLALCHEMY_DATABASE_URI"] = (
-        database_url or
-        "postgresql+psycopg2://biboko:12345678@localhost:5432/moringa_innovation_marketplace_db"
-    )
+    app.config["SQLALCHEMY_DATABASE_URI"] = database_url or "postgresql+psycopg2://biboko:12345678@localhost:5432/moringa_innovation_marketplace_db"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
     app.config["UPLOAD_FOLDER"] = os.path.join(os.getcwd(), "uploads")
 
+    db.init_app(app)
+    Migrate(app, db)
+    JWTManager(app)
+    CORS(app, supports_credentials=True, origins=[os.getenv("FRONTEND_URL", "http://localhost:3000")])
 
-def register_resources(api):
+    # Blueprint & API
+    api_bp = Blueprint("api", __name__)
+    api = Api(api_bp)
+
+    # Auth
     api.add_resource(Signup, "/signup")
     api.add_resource(Login, "/login")
     api.add_resource(UpdateProfile, "/profile")
+
+    # Projects
     api.add_resource(ProjectList, "/projects")
     api.add_resource(ProjectDetail, "/projects/<int:project_id>")
     api.add_resource(ProjectContactTeam, "/projects/<int:project_id>/contact")
     api.add_resource(ProjectLikeToggle, "/projects/<int:project_id>/like")
+
+    # Merchandise
     api.add_resource(MerchandiseList, "/merchandise")
     api.add_resource(MerchandiseItem, "/merchandise/<int:id>")
+
+    # Orders
     api.add_resource(OrderCreate, "/orders")
     api.add_resource(OrderDelete, "/orders/<int:order_id>")
+
+    # Admin
     api.add_resource(CategoryCreate, "/admin/categories")
     api.add_resource(ApproveProject, "/admin/projects/<int:project_id>/approve")
     api.add_resource(RejectProject, "/admin/projects/<int:project_id>/reject")
     api.add_resource(AdminUserList, "/admin/users")
+
+    # Users
     api.add_resource(UserList, "/users")
     api.add_resource(UserContact, "/users/<int:user_id>/contact")
+
+    # Recruiters
     api.add_resource(BrowseProjects, "/recruiters/projects")
+
+    # Mpesa
     api.add_resource(MpesaPay, "/mpesa/pay")
     api.add_resource(MpesaCallback, "/mpesa/callback")
 
-
-def create_app():
-    app = Flask(__name__)
-    configure_app(app)
-
-    db.init_app(app)
-    Migrate(app, db)
-    JWTManager(app)
-
-    CORS(app, supports_credentials=True, origins=[os.getenv("FRONTEND_URL", "http://localhost:3000")])
-
-    api = Api(app)
-    register_resources(api)
+    app.register_blueprint(api_bp, url_prefix="/api")
 
     @app.route("/")
     def home():
         return {"status": "API running"}, 200
 
     return app
-
 
 app = create_app()
 
