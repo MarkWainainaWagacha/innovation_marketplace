@@ -41,11 +41,14 @@ def create_app():
     Migrate(app, db)
     JWTManager(app)
 
-    # CORS
-    CORS(app, supports_credentials=True, origins=[
-        "http://localhost:3000",
-        "http://localhost:3001"
-    ])
+    # ✅ CORS origin validation per environment
+    env = os.getenv("FLASK_ENV", "development")
+    if env == "production":
+        allowed_origins = os.getenv("PROD_FRONTEND_URLS", "").split(",")
+    else:
+        allowed_origins = ["http://localhost:3000", "http://localhost:3001"]
+
+    CORS(app, supports_credentials=True, origins=allowed_origins)
 
     # Initialize API
     api = Api(app)
@@ -76,10 +79,9 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ API key protection middleware
+    # API key protection middleware
     @app.before_request
     def check_api_key():
-        # Skip root and token refresh route
         if request.path in ["/", "/token/refresh"]:
             return
         api_key = request.headers.get("X-API-KEY")
@@ -87,7 +89,7 @@ def create_app():
         if api_key != valid_key:
             return jsonify({"error": "Invalid API key"}), 401
 
-    # ✅ JWT token refresh endpoint
+    # JWT token refresh endpoint
     @app.route("/token/refresh", methods=["POST"])
     @jwt_required(refresh=True)
     def refresh_token():
