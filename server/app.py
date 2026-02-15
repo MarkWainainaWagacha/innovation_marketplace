@@ -148,6 +148,13 @@ def create_app():
         times.append(now)
         request_times[ip] = times
 
+    # Request validation for JSON body in POST/PUT requests
+    @app.before_request
+    def validate_json_body():
+        if request.method in ["POST", "PUT"] and request.path not in ["/", "/health"]:
+            if not request.is_json:
+                return jsonify({"error": "Request body must be JSON"}), 400
+
     # JWT token refresh endpoint
     @app.route("/token/refresh", methods=["POST"])
     @jwt_required(refresh=True)
