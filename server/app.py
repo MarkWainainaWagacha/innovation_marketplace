@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import time
 from flask import Flask, request, jsonify
 from flask_migrate import Migrate
 from flask_restful import Api
@@ -51,40 +52,24 @@ def create_app():
     api = Api(app)
 
     # Register resources
-
-    # Auth
     api.add_resource(Signup, "/signup")
     api.add_resource(Login, "/login")
     api.add_resource(UpdateProfile, "/profile")
-
-    # Projects
     api.add_resource(ProjectList, "/projects")
     api.add_resource(ProjectDetail, "/projects/<int:project_id>")
     api.add_resource(ProjectContactTeam, "/projects/<int:project_id>/contact")
     api.add_resource(ProjectLikeToggle, "/projects/<int:project_id>/like")
-
-    # Merchandise
     api.add_resource(MerchandiseList, "/merchandise")
     api.add_resource(MerchandiseItem, "/merchandise/<int:id>")
-
-    # Orders
     api.add_resource(OrderCreate, "/orders")
     api.add_resource(OrderDelete, "/orders/<int:order_id>")
-
-    # Admin
     api.add_resource(CategoryCreate, "/admin/categories")
     api.add_resource(ApproveProject, "/admin/projects/<int:project_id>/approve")
     api.add_resource(RejectProject, "/admin/projects/<int:project_id>/reject")
     api.add_resource(AdminUserList, "/admin/users")
-
-    # Users
     api.add_resource(UserList, "/users")
     api.add_resource(UserContact, "/users/<int:user_id>/contact")
-
-    # Recruiters
     api.add_resource(BrowseProjects, "/recruiters/projects")
-
-    # Mpesa
     api.add_resource(MpesaPay, "/mpesa/pay")
     api.add_resource(MpesaCallback, "/mpesa/callback")
 
@@ -92,13 +77,24 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ Request logging middleware
+    # ✅ Simple rate-limiting middleware (per IP)
+    request_times = {}
+
     @app.before_request
-    def log_request_info():
+    def limit_requests():
         ip = request.remote_addr
-        method = request.method
-        path = request.path
-        app.logger.info(f"Request from {ip}: {method} {path}")
+        now = time.time()
+        window = 60  # seconds
+        max_requests = 30  # max requests per window
+
+        times = request_times.get(ip, [])
+        # Remove old requests outside the window
+        times = [t for t in times if now - t < window]
+        if len(times) >= max_requests:
+            return jsonify({"error": "Too many requests"}), 429
+
+        times.append(now)
+        request_times[ip] = times
 
     return app
 
