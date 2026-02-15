@@ -80,12 +80,12 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ Request timer for logging
+    # Request timer for logging
     @app.before_request
     def start_timer():
         request.start_time = time.time()
 
-    # ✅ Request + response logging with duration
+    # Request + response logging with duration
     @app.after_request
     def log_request(response):
         duration = time.time() - request.start_time
@@ -106,6 +106,24 @@ def create_app():
         if api_key != valid_key:
             return jsonify({"error": "Invalid API key"}), 401
 
+    # Rate limiting per IP
+    request_times = {}
+
+    @app.before_request
+    def rate_limit():
+        if request.path == "/":
+            return
+        ip = request.remote_addr
+        now = time.time()
+        window = 60  # seconds
+        max_requests = 30
+        times = request_times.get(ip, [])
+        times = [t for t in times if now - t < window]
+        if len(times) >= max_requests:
+            return jsonify({"error": "Too many requests"}), 429
+        times.append(now)
+        request_times[ip] = times
+
     # JWT token refresh endpoint
     @app.route("/token/refresh", methods=["POST"])
     @jwt_required(refresh=True)
@@ -114,7 +132,7 @@ def create_app():
         new_token = create_access_token(identity=identity)
         return {"access_token": new_token}, 200
 
-    # ✅ Global exception handler for structured JSON errors
+    # Global exception handler for structured JSON errors
     @app.errorhandler(Exception)
     def handle_exception(e):
         code = getattr(e, "code", 500)
