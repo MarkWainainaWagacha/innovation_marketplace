@@ -111,6 +111,13 @@ def create_app():
     @app.before_request
     def start_timer():
         g.start_time = time.time()
+        # Log request body (up to 1KB)
+        if request.method in ["POST", "PUT"]:
+            try:
+                data = request.get_json(silent=True)
+                g.request_body = str(data)[:1024]
+            except:
+                g.request_body = None
 
     @app.after_request
     def log_request(response):
@@ -119,7 +126,17 @@ def create_app():
         path = request.path
         status = response.status_code
         ip = request.remote_addr
-        app.logger.info(f"{ip} {method} {path} -> {status} ({duration:.3f}s)")
+
+        # Log response body (up to 1KB)
+        try:
+            resp_data = response.get_data(as_text=True)[:1024]
+        except:
+            resp_data = None
+
+        app.logger.info(
+            f"{ip} {method} {path} -> {status} ({duration:.3f}s), "
+            f"Request: {g.get('request_body')}, Response: {resp_data}"
+        )
 
         # Store duration per endpoint
         if path not in app.endpoint_times:
@@ -151,4 +168,44 @@ def create_app():
         times = request_times.get(ip, [])
         times = [t for t in times if now - t < window]
         if len(times) >= max_requests:
-            return json
+            return jsonify({"error": "Too many requests"}), 429
+        times.append(now)
+        request_times[ip] = times
+
+    # Request validation for JSON body in POST/PUT requests
+    @app.before_request
+    def validate_json_body():
+        if request.method in ["POST", "PUT"] and request.path not in ["/", "/health"]:
+            if not request.is_json:
+                return jsonify({"error": "Request body must be JSON"}), 400
+
+    # JWT token refresh endpoint
+    @app.route("/token/refresh", methods=["POST"])
+    @jwt_required(refresh=True)
+    def refresh_token():
+        identity = get_jwt_identity()
+        new_token = create_access_token(identity=identity)
+        return {"access_token": new_token}, 200
+
+    # Global exception handler for structured JSON errors
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        code = getattr(e, "code", 500)
+        message = getattr(e, "description", str(e))
+        return jsonify({"error": message, "status_code": code}), code
+
+    # Graceful shutdown handler
+    def shutdown_signal_handler(signum, frame):
+        app.logger.info(f"Received signal {signum}. Shutting down gracefully...")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, shutdown_signal_handler)
+    signal.signal(signal.SIGTERM, shutdown_signal_handler)
+
+    return app
+
+
+app = create_app()
+
+if __name__ == "__main__":
+    app.run(port=5555, debug=True)
