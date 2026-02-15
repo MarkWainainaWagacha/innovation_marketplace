@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-import time
 from flask import Flask, request, jsonify
 from flask_migrate import Migrate
 from flask_restful import Api
@@ -77,20 +76,16 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ Request + Response logging with duration
+    # ✅ Simple API key protection middleware
     @app.before_request
-    def start_timer():
-        request.start_time = time.time()
-
-    @app.after_request
-    def log_request(response):
-        duration = time.time() - request.start_time
-        method = request.method
-        path = request.path
-        status = response.status_code
-        ip = request.remote_addr
-        app.logger.info(f"{ip} {method} {path} -> {status} ({duration:.3f}s)")
-        return response
+    def check_api_key():
+        # Skip for root
+        if request.path == "/":
+            return
+        api_key = request.headers.get("X-API-KEY")
+        valid_key = os.getenv("API_KEY", "dev-key")
+        if api_key != valid_key:
+            return jsonify({"error": "Invalid API key"}), 401
 
     return app
 
