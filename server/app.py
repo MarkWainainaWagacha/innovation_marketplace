@@ -6,7 +6,7 @@ from flask import Flask
 from flask_migrate import Migrate
 from flask_restful import Api
 from flask_cors import CORS
-from flask_jwt_extended import JWTManager
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from models import db
 
 from resources.mpesa import MpesaPay, MpesaCallback
@@ -92,11 +92,13 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ Custom JSON response header
-    @app.after_request
-    def wrap_response(response):
-        response.headers["X-Powered-By"] = "Innovation Marketplace API"
-        return response
+    # ✅ JWT Token refresh endpoint
+    @app.route("/token/refresh", methods=["POST"])
+    @jwt_required(refresh=True)
+    def refresh_token():
+        identity = get_jwt_identity()
+        new_token = create_access_token(identity=identity)
+        return {"access_token": new_token}, 200
 
     return app
 
