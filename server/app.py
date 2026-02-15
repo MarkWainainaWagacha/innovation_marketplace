@@ -107,17 +107,18 @@ def create_app():
     app.start_time = time.time()
     app.endpoint_times = {}  # Stores duration lists per endpoint
 
-    # Request timer for logging and performance tracking
+    # Request timer and structured logging
     @app.before_request
     def start_timer():
         g.start_time = time.time()
-        # Log request body (up to 1KB)
+        # Capture request body (up to 1KB)
         if request.method in ["POST", "PUT"]:
             try:
-                data = request.get_json(silent=True)
-                g.request_body = str(data)[:1024]
+                g.request_body = str(request.get_json(silent=True))[:1024]
             except:
                 g.request_body = None
+        # Capture important headers
+        g.request_headers = {k: request.headers.get(k) for k in ["Authorization", "X-API-KEY"]}
 
     @app.after_request
     def log_request(response):
@@ -127,7 +128,7 @@ def create_app():
         status = response.status_code
         ip = request.remote_addr
 
-        # Log response body (up to 1KB)
+        # Capture response body (up to 1KB)
         try:
             resp_data = response.get_data(as_text=True)[:1024]
         except:
@@ -135,6 +136,7 @@ def create_app():
 
         app.logger.info(
             f"{ip} {method} {path} -> {status} ({duration:.3f}s), "
+            f"Headers: {g.get('request_headers')}, "
             f"Request: {g.get('request_body')}, Response: {resp_data}"
         )
 
