@@ -2,8 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-import time
-from flask import Flask, request
+from flask import Flask
 from flask_migrate import Migrate
 from flask_restful import Api
 from flask_cors import CORS
@@ -36,6 +35,9 @@ def create_app():
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
     app.config["UPLOAD_FOLDER"] = os.path.join(os.getcwd(), "uploads")
+
+    # ✅ Set debug mode based on environment
+    app.config["DEBUG"] = os.getenv("FLASK_ENV") == "development"
 
     # Initialize extensions
     db.init_app(app)
@@ -93,21 +95,10 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ Request timing middleware
-    @app.before_request
-    def start_timer():
-        request.start_time = time.time()
-
-    @app.after_request
-    def log_request_time(response):
-        duration = time.time() - request.start_time
-        app.logger.info(f"{request.method} {request.path} took {duration:.3f}s")
-        return response
-
     return app
 
 
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(port=5555, debug=True)
+    app.run(port=5555, debug=app.config["DEBUG"])
