@@ -41,7 +41,7 @@ def create_app():
     Migrate(app, db)
     JWTManager(app)
 
-    # ✅ CORS origin validation per environment
+    # CORS configuration per environment
     env = os.getenv("FLASK_ENV", "development")
     if env == "production":
         allowed_origins = os.getenv("PROD_FRONTEND_URLS", "").split(",")
@@ -96,6 +96,13 @@ def create_app():
         identity = get_jwt_identity()
         new_token = create_access_token(identity=identity)
         return {"access_token": new_token}, 200
+
+    # ✅ Global exception handler for structured JSON errors
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        code = getattr(e, "code", 500)
+        message = getattr(e, "description", str(e))
+        return jsonify({"error": message, "status_code": code}), code
 
     return app
 
