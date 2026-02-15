@@ -3,6 +3,8 @@ load_dotenv()
 
 import os
 import time
+import signal
+import sys
 from flask import Flask, request, jsonify
 from flask_migrate import Migrate
 from flask_restful import Api
@@ -160,6 +162,15 @@ def create_app():
         code = getattr(e, "code", 500)
         message = getattr(e, "description", str(e))
         return jsonify({"error": message, "status_code": code}), code
+
+    # Graceful shutdown handler
+    def shutdown_signal_handler(signum, frame):
+        app.logger.info(f"Received signal {signum}. Shutting down gracefully...")
+        # Cleanup logic can go here if needed
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, shutdown_signal_handler)
+    signal.signal(signal.SIGTERM, shutdown_signal_handler)
 
     return app
 
