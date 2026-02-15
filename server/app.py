@@ -36,8 +36,11 @@ def create_app():
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
     app.config["UPLOAD_FOLDER"] = os.path.join(os.getcwd(), "uploads")
+    
+    # ✅ Limit request body size to 5MB
+    app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB
 
-    # ✅ Ensure upload folder exists
+    # Ensure upload folder exists
     if not os.path.exists(app.config["UPLOAD_FOLDER"]):
         os.makedirs(app.config["UPLOAD_FOLDER"])
 
