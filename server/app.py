@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-from flask import Flask, jsonify
+from flask import Flask, request, jsonify
 from flask_migrate import Migrate
 from flask_restful import Api
 from flask_cors import CORS
@@ -92,10 +92,13 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ Global 404 error handler
-    @app.errorhandler(404)
-    def not_found(e):
-        return jsonify({"error": "Resource not found"}), 404
+    # ✅ Request logging middleware
+    @app.before_request
+    def log_request_info():
+        ip = request.remote_addr
+        method = request.method
+        path = request.path
+        app.logger.info(f"Request from {ip}: {method} {path}")
 
     return app
 
