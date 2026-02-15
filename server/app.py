@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-from flask import Flask, Blueprint
+from flask import Flask
 from flask_migrate import Migrate
 from flask_restful import Api
 from flask_cors import CORS
@@ -19,6 +19,7 @@ from resources.recruiters import BrowseProjects
 from resources.likes import ProjectLikeToggle
 from resources.users import UserList, UserContact
 
+
 def create_app():
     app = Flask(__name__)
 
@@ -26,19 +27,30 @@ def create_app():
     database_url = os.getenv("DATABASE_URL", "")
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql://", 1)
-    app.config["SQLALCHEMY_DATABASE_URI"] = database_url or "postgresql+psycopg2://biboko:12345678@localhost:5432/moringa_innovation_marketplace_db"
+
+    app.config["SQLALCHEMY_DATABASE_URI"] = (
+        database_url or
+        "postgresql+psycopg2://biboko:12345678@localhost:5432/moringa_innovation_marketplace_db"
+    )
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
     app.config["UPLOAD_FOLDER"] = os.path.join(os.getcwd(), "uploads")
 
+    # Initialize extensions
     db.init_app(app)
     Migrate(app, db)
     JWTManager(app)
-    CORS(app, supports_credentials=True, origins=[os.getenv("FRONTEND_URL", "http://localhost:3000")])
 
-    # Blueprint & API
-    api_bp = Blueprint("api", __name__)
-    api = Api(api_bp)
+    # ✅ CORS for multiple frontend origins
+    CORS(app, supports_credentials=True, origins=[
+        "http://localhost:3000",
+        "http://localhost:3001"
+    ])
+
+    # Initialize API
+    api = Api(app)
+
+    # Register resources
 
     # Auth
     api.add_resource(Signup, "/signup")
@@ -76,13 +88,12 @@ def create_app():
     api.add_resource(MpesaPay, "/mpesa/pay")
     api.add_resource(MpesaCallback, "/mpesa/callback")
 
-    app.register_blueprint(api_bp, url_prefix="/api")
-
     @app.route("/")
     def home():
         return {"status": "API running"}, 200
 
     return app
+
 
 app = create_app()
 
