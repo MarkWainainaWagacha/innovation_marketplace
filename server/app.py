@@ -37,7 +37,7 @@ def create_app():
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
     app.config["UPLOAD_FOLDER"] = os.path.join(os.getcwd(), "uploads")
     
-    # ✅ Limit request body size to 5MB
+    # Limit request body size to 5MB
     app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB
 
     # Ensure upload folder exists
@@ -83,9 +83,24 @@ def create_app():
     api.add_resource(MpesaPay, "/mpesa/pay")
     api.add_resource(MpesaCallback, "/mpesa/callback")
 
+    # Health check & metrics endpoint
+    @app.route("/health", methods=["GET"])
+    def health_check():
+        uptime = time.time() - getattr(app, "start_time", time.time())
+        return jsonify({
+            "status": "ok",
+            "uptime_seconds": round(uptime, 2),
+            "database": "connected" if db.engine else "disconnected",
+            "environment": env
+        })
+
+    # Root endpoint
     @app.route("/")
     def home():
         return {"status": "API running"}, 200
+
+    # Start time for uptime metrics
+    app.start_time = time.time()
 
     # Request timer for logging
     @app.before_request
@@ -106,7 +121,7 @@ def create_app():
     # API key protection middleware
     @app.before_request
     def check_api_key():
-        if request.path in ["/", "/token/refresh"]:
+        if request.path in ["/", "/token/refresh", "/health"]:
             return
         api_key = request.headers.get("X-API-KEY")
         valid_key = os.getenv("API_KEY", "dev-key")
@@ -118,7 +133,7 @@ def create_app():
 
     @app.before_request
     def rate_limit():
-        if request.path == "/":
+        if request.path in ["/", "/health"]:
             return
         ip = request.remote_addr
         now = time.time()
