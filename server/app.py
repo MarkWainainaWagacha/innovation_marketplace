@@ -36,10 +36,6 @@ def create_app():
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
     app.config["UPLOAD_FOLDER"] = os.path.join(os.getcwd(), "uploads")
 
-    # ✅ Ensure uploads folder exists
-    if not os.path.exists(app.config["UPLOAD_FOLDER"]):
-        os.makedirs(app.config["UPLOAD_FOLDER"])
-
     # Initialize extensions
     db.init_app(app)
     Migrate(app, db)
@@ -95,6 +91,12 @@ def create_app():
     @app.route("/")
     def home():
         return {"status": "API running"}, 200
+
+    # ✅ Custom JSON response header
+    @app.after_request
+    def wrap_response(response):
+        response.headers["X-Powered-By"] = "Innovation Marketplace API"
+        return response
 
     return app
 
