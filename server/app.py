@@ -2,11 +2,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
-from flask import Flask
+import time
+from flask import Flask, request
 from flask_migrate import Migrate
 from flask_restful import Api
 from flask_cors import CORS
-from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import JWTManager
 from models import db
 
 from resources.mpesa import MpesaPay, MpesaCallback
@@ -92,13 +93,16 @@ def create_app():
     def home():
         return {"status": "API running"}, 200
 
-    # ✅ JWT Token refresh endpoint
-    @app.route("/token/refresh", methods=["POST"])
-    @jwt_required(refresh=True)
-    def refresh_token():
-        identity = get_jwt_identity()
-        new_token = create_access_token(identity=identity)
-        return {"access_token": new_token}, 200
+    # ✅ Request timing middleware
+    @app.before_request
+    def start_timer():
+        request.start_time = time.time()
+
+    @app.after_request
+    def log_request_time(response):
+        duration = time.time() - request.start_time
+        app.logger.info(f"{request.method} {request.path} took {duration:.3f}s")
+        return response
 
     return app
 
