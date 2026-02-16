@@ -18,6 +18,12 @@ def _require_env(name: str) -> str:
 class UserList(Resource):
     @jwt_required()
     def get(self):
+        current_user_id = get_jwt_identity()
+        current_user = User.query.get(current_user_id)
+
+        if not current_user:
+            return {"status": "error", "message": "User not found"}, 404
+
         page = int(request.args.get("page", 1))
         per_page = int(request.args.get("per_page", 10))
         search = request.args.get("search", "").strip()
@@ -25,7 +31,7 @@ class UserList(Resource):
 
         query = User.query
 
-        # Search functionality
+        # Search
         if search:
             query = query.filter(
                 (User.first_name.ilike(f"%{search}%")) |
@@ -49,7 +55,8 @@ class UserList(Resource):
                     "id": u.id,
                     "first_name": u.first_name,
                     "last_name": u.last_name,
-                    "email": u.email,
+                    # Only admin sees emails
+                    "email": u.email if current_user.is_admin else None,
                 }
                 for u in pagination.items
             ],
@@ -59,17 +66,25 @@ class UserList(Resource):
 class UserContact(Resource):
     """
     POST /users/<user_id>/contact
-    Requires JWT
-    Prevents contacting yourself
-    Sends email via Resend
+    - JWT required
+    - Prevent self-contact
+    - Only admins can contact any user
     """
 
     @jwt_required()
     def post(self, user_id: int):
         current_user_id = get_jwt_identity()
+        current_user = User.query.get(current_user_id)
+
+        if not current_user:
+            return {"status": "error", "message": "User not found"}, 404
 
         if current_user_id == user_id:
             return {"status": "error", "message": "You cannot contact yourself"}, 400
+
+        # Only admin can contact any user
+        if not current_user.is_admin:
+            return {"status": "error", "message": "Only admins can contact users"}, 403
 
         user = User.query.get_or_404(user_id)
 
