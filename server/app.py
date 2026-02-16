@@ -5,6 +5,8 @@ import os
 import time
 import signal
 import sys
+import uuid
+import logging
 from flask import Flask, request, jsonify, g
 from flask_migrate import Migrate
 from flask_restful import Api
@@ -26,7 +28,9 @@ from resources.users import UserList, UserContact
 def create_app():
     app = Flask(__name__)
 
+    # --------------------------------------------------
     # Configuration
+    # --------------------------------------------------
     database_url = os.getenv("DATABASE_URL", "")
     if database_url.startswith("postgres://"):
         database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -38,20 +42,29 @@ def create_app():
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "dev-secret-key")
     app.config["UPLOAD_FOLDER"] = os.path.join(os.getcwd(), "uploads")
-    
-    # Limit request body size to 5MB
-    app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB
+    app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5MB limit
 
-    # Ensure upload folder exists
     if not os.path.exists(app.config["UPLOAD_FOLDER"]):
         os.makedirs(app.config["UPLOAD_FOLDER"])
 
-    # Initialize extensions
+    # --------------------------------------------------
+    # Logging Configuration
+    # --------------------------------------------------
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s"
+    )
+
+    # --------------------------------------------------
+    # Initialize Extensions
+    # --------------------------------------------------
     db.init_app(app)
     Migrate(app, db)
     JWTManager(app)
 
-    # CORS configuration per environment
+    # --------------------------------------------------
+    # CORS Configuration
+    # --------------------------------------------------
     env = os.getenv("FLASK_ENV", "development")
     if env == "production":
         allowed_origins = os.getenv("PROD_FRONTEND_URLS", "").split(",")
@@ -60,10 +73,11 @@ def create_app():
 
     CORS(app, supports_credentials=True, origins=allowed_origins)
 
-    # Initialize API
+    # --------------------------------------------------
+    # API Initialization
+    # --------------------------------------------------
     api = Api(app)
 
-    # Register resources
     api.add_resource(Signup, "/signup")
     api.add_resource(Login, "/login")
     api.add_resource(UpdateProfile, "/profile")
@@ -85,78 +99,58 @@ def create_app():
     api.add_resource(MpesaPay, "/mpesa/pay")
     api.add_resource(MpesaCallback, "/mpesa/callback")
 
-    # Health check & metrics endpoint
+    # --------------------------------------------------
+    # Health Endpoint
+    # --------------------------------------------------
+    app.start_time = time.time()
+    app.endpoint_times = {}
+
     @app.route("/health", methods=["GET"])
     def health_check():
-        uptime = time.time() - getattr(app, "start_time", time.time())
-        avg_durations = {k: round(sum(v)/len(v), 3) for k,v in getattr(app, "endpoint_times", {}).items()}
+        uptime = time.time() - app.start_time
+        avg_durations = {
+            k: round(sum(v) / len(v), 3)
+            for k, v in app.endpoint_times.items()
+        }
         return jsonify({
             "status": "ok",
             "uptime_seconds": round(uptime, 2),
-            "database": "connected" if db.engine else "disconnected",
             "environment": env,
             "avg_request_durations": avg_durations
         })
 
-    # Root endpoint
     @app.route("/")
     def home():
         return {"status": "API running"}, 200
 
-    # Start time for uptime metrics
-    app.start_time = time.time()
-    app.endpoint_times = {}  # Stores duration lists per endpoint
+    # --------------------------------------------------
+    # Middleware
+    # --------------------------------------------------
 
-    # Request timer and structured logging
+    # Generate Request ID
     @app.before_request
-    def start_timer():
+    def generate_request_id():
+        g.request_id = str(uuid.uuid4())
         g.start_time = time.time()
-        # Capture request body (up to 1KB)
-        if request.method in ["POST", "PUT"]:
-            try:
-                g.request_body = str(request.get_json(silent=True))[:1024]
-            except:
-                g.request_body = None
-        # Capture important headers
-        g.request_headers = {k: request.headers.get(k) for k in ["Authorization", "X-API-KEY"]}
 
-    @app.after_request
-    def log_request(response):
-        duration = time.time() - g.start_time
-        method = request.method
-        path = request.path
-        status = response.status_code
-        ip = request.remote_addr
+    # Validate JSON
+    @app.before_request
+    def validate_json_body():
+        if request.method in ["POST", "PUT"] and request.path not in ["/", "/health"]:
+            if not request.is_json:
+                return jsonify({"error": "Request body must be JSON"}), 400
 
-        # Capture response body (up to 1KB)
-        try:
-            resp_data = response.get_data(as_text=True)[:1024]
-        except:
-            resp_data = None
-
-        app.logger.info(
-            f"{ip} {method} {path} -> {status} ({duration:.3f}s), "
-            f"Headers: {g.get('request_headers')}, "
-            f"Request: {g.get('request_body')}, Response: {resp_data}"
-        )
-
-        # Store duration per endpoint
-        if path not in app.endpoint_times:
-            app.endpoint_times[path] = []
-        app.endpoint_times[path].append(duration)
-        return response
-
-    # API key protection middleware
+    # API Key Check
     @app.before_request
     def check_api_key():
-        if request.path in ["/", "/token/refresh", "/health"]:
+        if request.path in ["/", "/health", "/token/refresh"]:
             return
         api_key = request.headers.get("X-API-KEY")
         valid_key = os.getenv("API_KEY", "dev-key")
         if api_key != valid_key:
             return jsonify({"error": "Invalid API key"}), 401
 
-    # Rate limiting per IP
+    # Rate Limiting
     request_times = {}
 
     @app.before_request
@@ -165,23 +159,39 @@ def create_app():
             return
         ip = request.remote_addr
         now = time.time()
-        window = 60  # seconds
+        window = 60
         max_requests = 30
+
         times = request_times.get(ip, [])
         times = [t for t in times if now - t < window]
+
         if len(times) >= max_requests:
             return jsonify({"error": "Too many requests"}), 429
+
         times.append(now)
         request_times[ip] = times
 
-    # Request validation for JSON body in POST/PUT requests
-    @app.before_request
-    def validate_json_body():
-        if request.method in ["POST", "PUT"] and request.path not in ["/", "/health"]:
-            if not request.is_json:
-                return jsonify({"error": "Request body must be JSON"}), 400
+    # Logging After Request
+    @app.after_request
+    def log_request(response):
+        duration = time.time() - g.start_time
+        path = request.path
 
-    # JWT token refresh endpoint
+        if path not in app.endpoint_times:
+            app.endpoint_times[path] = []
+        app.endpoint_times[path].append(duration)
+
+        response.headers["X-Request-ID"] = g.request_id
+
+        app.logger.info(
+            f"RID={g.request_id} | "
+            f"{request.remote_addr} {request.method} {path} "
+            f"{response.status_code} | {duration:.3f}s"
+        )
+
+        return response
+
+    # JWT Refresh
     @app.route("/token/refresh", methods=["POST"])
     @jwt_required(refresh=True)
     def refresh_token():
@@ -189,16 +199,20 @@ def create_app():
         new_token = create_access_token(identity=identity)
         return {"access_token": new_token}, 200
 
-    # Global exception handler for structured JSON errors
+    # Global Error Handler
     @app.errorhandler(Exception)
     def handle_exception(e):
         code = getattr(e, "code", 500)
         message = getattr(e, "description", str(e))
-        return jsonify({"error": message, "status_code": code}), code
+        return jsonify({
+            "error": message,
+            "status_code": code,
+            "request_id": g.get("request_id")
+        }), code
 
-    # Graceful shutdown handler
+    # Graceful Shutdown
     def shutdown_signal_handler(signum, frame):
-        app.logger.info(f"Received signal {signum}. Shutting down gracefully...")
+        app.logger.info(f"Shutting down gracefully (signal {signum})...")
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown_signal_handler)
