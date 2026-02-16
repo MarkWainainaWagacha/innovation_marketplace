@@ -1,7 +1,7 @@
 from flask import request, jsonify
 from flask_restful import Resource
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import User, db, ContactAudit, EmailHistory
+from models import User, db, ContactAudit, EmailHistory, NotificationPreference
 import os
 from datetime import datetime
 from functools import wraps
@@ -47,7 +47,8 @@ class ContactSchema(Schema):
     subject = fields.Str(required=True)
     message = fields.Str(required=True)
     template_name = fields.Str(required=False)
-    schedule_at = fields.DateTime(required=False)  # optional scheduled send
+    schedule_at = fields.DateTime(required=False)
+    notify_type = fields.Str(required=False, validate=lambda s: s in ["all", "email", "none"])
 
 
 # -----------------------------
@@ -155,6 +156,12 @@ class UserContact(Resource):
         except ValidationError as err:
             return make_response(message=str(err), status="error", code=400)
 
+        # Respect user's notification preferences
+        pref = NotificationPreference.query.filter_by(user_id=user.id).first()
+        notify = data.get("notify_type") or "all"
+        if pref and pref.email_enabled is False and notify in ["all", "email"]:
+            return make_response(message="User opted out of email notifications", status="error", code=403)
+
         recipient_email = (user.email or "").strip().lower()
         if not recipient_email:
             return make_response(message="User has no email", status="error", code=400)
@@ -170,7 +177,6 @@ class UserContact(Resource):
 
             schedule_at = data.get("schedule_at")
             if schedule_at:
-                # Schedule via Celery eta
                 send_email_task.apply_async(
                     args=[{
                         "from": from_email,
@@ -192,7 +198,6 @@ class UserContact(Resource):
         except Exception as e:
             return make_response(message=f"Email queue failed: {e}", status="error", code=500)
 
-        # Save to EmailHistory
         email_history = EmailHistory(
             sender_id=current_user.id,
             recipient_id=user.id,
@@ -200,11 +205,10 @@ class UserContact(Resource):
             subject=data["subject"],
             template=data.get("template_name"),
             scheduled_at=data.get("schedule_at"),
-            sent_at=None  # Will update when task completes
+            sent_at=None
         )
         db.session.add(email_history)
 
-        # Save audit log
         audit = ContactAudit(
             sender_id=current_user.id,
             recipient_id=user.id,
@@ -215,74 +219,34 @@ class UserContact(Resource):
         db.session.add(audit)
         db.session.commit()
 
-        # Analytics hook
         print(f"Analytics: user_contact_event sender={current_user.id} recipient={user.id} template={data.get('template_name')} schedule={data.get('schedule_at')}")
 
         return make_response(message="Email queued successfully", data={"sent_to": len(to_emails)})
 
 
 # -----------------------------
-# CONTACT LOGS
+# WEBHOOK FOR EMAIL STATUS
 # -----------------------------
-class ContactLogs(Resource):
+class EmailWebhook(Resource):
 
-    @role_required("admin", "recruiter", "manager")
-    def get(self):
-        audits = ContactAudit.query.order_by(ContactAudit.timestamp.desc()).all()
-        logs = [
-            {
-                "sender_id": a.sender_id,
-                "recipient_id": a.recipient_id,
-                "recipient_email": a.recipient_email,
-                "subject": a.subject,
-                "timestamp": a.timestamp.isoformat()
-            } for a in audits
-        ]
-        return make_response(data={"total_logs": len(logs), "logs": logs})
+    def post(self):
+        # Example: Resend or other email provider posts status updates
+        payload = request.get_json() or {}
+        message_id = payload.get("message_id")
+        status = payload.get("status")  # delivered, failed, opened
+        updated_at = datetime.utcnow()
 
-
-# -----------------------------
-# DEACTIVATE / REACTIVATE USER
-# -----------------------------
-class DeactivateUser(Resource):
-    @role_required("admin")
-    def patch(self, user_id: int):
-        user = User.query.get_or_404(user_id)
-        user.is_active = False
-        db.session.commit()
-        return make_response(message="User deactivated")
-
-
-class ReactivateUser(Resource):
-    @role_required("admin")
-    def patch(self, user_id: int):
-        user = User.query.get_or_404(user_id)
-        user.is_active = True
-        db.session.commit()
-        return make_response(message="User reactivated")
+        if message_id:
+            email_entry = EmailHistory.query.filter_by(id=message_id).first()
+            if email_entry:
+                email_entry.status = status
+                email_entry.sent_at = updated_at if status in ["delivered", "failed"] else email_entry.sent_at
+                db.session.commit()
+                print(f"Webhook: email {message_id} updated to {status}")
+                return make_response(message="Webhook processed")
+        return make_response(message="Invalid webhook payload", status="error", code=400)
 
 
 # -----------------------------
-# USER ANALYTICS
-# -----------------------------
-class UserAnalytics(Resource):
+# CONTACT LOGS, DEACTIVATE/REACTIVATE, ANALYTICS
 
-    @role_required("admin", "manager")
-    def get(self):
-        total_users = User.query.count()
-        active_users = User.query.filter(User.is_active == True).count()
-        inactive_users = User.query.filter(User.is_active == False).count()
-        contacts_sent = ContactAudit.query.count()
-        contacts_today = ContactAudit.query.filter(
-            ContactAudit.timestamp >= datetime.utcnow().replace(hour=0, minute=0, second=0)
-        ).count()
-        email_history_count = EmailHistory.query.count()
-
-        return make_response(data={
-            "total_users": total_users,
-            "active_users": active_users,
-            "inactive_users": inactive_users,
-            "contacts_sent_total": contacts_sent,
-            "contacts_sent_today": contacts_today,
-            "emails_history_total": email_history_count
-        }, message="Analytics summary")
