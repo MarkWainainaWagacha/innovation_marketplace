@@ -194,7 +194,7 @@ class DeactivateUser(Resource):
         user.is_active = False
         db.session.commit()
         return make_response(message="User deactivated")
-
+####
 
 class ReactivateUser(Resource):
     @admin_required
