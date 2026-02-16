@@ -4,8 +4,15 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import User
 import os
 import requests
+import time
 
 RESEND_API_URL = "https://api.resend.com/emails"
+
+# In-memory rate limiting store
+CONTACT_LOG = {}  # {sender_id: [timestamps]}
+
+RATE_LIMIT_WINDOW = 60  # seconds
+MAX_EMAILS_PER_WINDOW = 3  # max emails per minute
 
 
 def _require_env(name: str) -> str:
@@ -55,7 +62,6 @@ class UserList(Resource):
                     "id": u.id,
                     "first_name": u.first_name,
                     "last_name": u.last_name,
-                    # Only admin sees emails
                     "email": u.email if current_user.is_admin else None,
                 }
                 for u in pagination.items
@@ -66,9 +72,11 @@ class UserList(Resource):
 class UserContact(Resource):
     """
     POST /users/<user_id>/contact
+
     - JWT required
+    - Admin only
     - Prevent self-contact
-    - Only admins can contact any user
+    - Rate limited
     """
 
     @jwt_required()
@@ -82,9 +90,28 @@ class UserContact(Resource):
         if current_user_id == user_id:
             return {"status": "error", "message": "You cannot contact yourself"}, 400
 
-        # Only admin can contact any user
+        # Admin only restriction
         if not current_user.is_admin:
             return {"status": "error", "message": "Only admins can contact users"}, 403
+
+        # --------------------------
+        # Rate Limiting Logic
+        # --------------------------
+        now = time.time()
+        timestamps = CONTACT_LOG.get(current_user_id, [])
+
+        # Keep only timestamps within window
+        timestamps = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
+
+        if len(timestamps) >= MAX_EMAILS_PER_WINDOW:
+            return {
+                "status": "error",
+                "message": "Rate limit exceeded. Try again later."
+            }, 429
+
+        timestamps.append(now)
+        CONTACT_LOG[current_user_id] = timestamps
+        # --------------------------
 
         user = User.query.get_or_404(user_id)
 
