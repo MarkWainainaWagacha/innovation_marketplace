@@ -46,7 +46,7 @@ def role_required(*roles):
 class ContactSchema(Schema):
     subject = fields.Str(required=True)
     message = fields.Str(required=True)
-    template_name = fields.Str(required=False)  # optional template
+    template_name = fields.Str(required=False)
 
 
 # -----------------------------
@@ -56,6 +56,7 @@ def render_email_template(template_name: str, message: str):
     templates = {
         "welcome": f"<h1>Welcome</h1><p>{message}</p>",
         "alert": f"<strong>Alert:</strong> {message}",
+        "promotion": f"<h3>Promotion!</h3><p>{message}</p>",
         "default": f"<p>{message}</p>"
     }
     return templates.get(template_name, templates["default"])
@@ -185,9 +186,8 @@ class UserContact(Resource):
         db.session.add(audit)
         db.session.commit()
 
-        # Analytics hook (could be consumed by dashboard)
-        # Example: increment counter or log event
-        print(f"Analytics: user_contact_event sender={current_user.id} recipient={user.id}")
+        # Analytics hook for dashboard consumption
+        print(f"Analytics: user_contact_event sender={current_user.id} recipient={user.id} template={data.get('template_name')}")
 
         return make_response(message="Email queued successfully", data={"sent_to": len(to_emails)})
 
@@ -231,3 +231,27 @@ class ReactivateUser(Resource):
         user.is_active = True
         db.session.commit()
         return make_response(message="User reactivated")
+
+
+# -----------------------------
+# USER ANALYTICS
+# -----------------------------
+class UserAnalytics(Resource):
+
+    @role_required("admin")
+    def get(self):
+        total_users = User.query.count()
+        active_users = User.query.filter(User.is_active == True).count()
+        inactive_users = User.query.filter(User.is_active == False).count()
+        contacts_sent = ContactAudit.query.count()
+        contacts_today = ContactAudit.query.filter(
+            ContactAudit.timestamp >= datetime.utcnow().replace(hour=0, minute=0, second=0)
+        ).count()
+
+        return make_response(data={
+            "total_users": total_users,
+            "active_users": active_users,
+            "inactive_users": inactive_users,
+            "contacts_sent_total": contacts_sent,
+            "contacts_sent_today": contacts_today
+        }, message="Analytics summary")
