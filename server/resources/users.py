@@ -3,19 +3,14 @@ from flask_restful import Resource
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import User, db, ContactAudit
 import os
-import requests
-import time
 from datetime import datetime
-from threading import Thread
 from functools import wraps
 from marshmallow import Schema, fields, ValidationError
+from tasks import send_email_task  # Celery/RQ task module
 
-RESEND_API_URL = "https://api.resend.com/emails"
 CONTACT_LOG = {}
 RATE_LIMIT_WINDOW = 60
 MAX_EMAILS_PER_WINDOW = 3
-EMAIL_RETRY_LIMIT = 3
-EMAIL_RETRY_DELAY = 5  # seconds
 
 
 # -----------------------------
@@ -49,34 +44,6 @@ def admin_required(func):
 class ContactSchema(Schema):
     subject = fields.Str(required=True)
     message = fields.Str(required=True)
-
-
-# -----------------------------
-# BACKGROUND EMAIL SENDER WITH RETRY
-# -----------------------------
-def send_email_with_retry(payload, api_key, retry_count=0):
-    try:
-        r = requests.post(
-            RESEND_API_URL,
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            timeout=20
-        )
-        if r.status_code >= 400:
-            raise Exception(f"HTTP {r.status_code}")
-    except Exception as e:
-        if retry_count < EMAIL_RETRY_LIMIT:
-            time.sleep(EMAIL_RETRY_DELAY)
-            send_email_with_retry(payload, api_key, retry_count + 1)
-        else:
-            print(f"Failed to send email after {EMAIL_RETRY_LIMIT} retries: {e}")
-
-
-def send_email_async(payload, api_key):
-    Thread(target=send_email_with_retry, args=(payload, api_key)).start()
 
 
 # -----------------------------
@@ -147,7 +114,7 @@ class UserContact(Resource):
             return make_response(message="Cannot contact inactive user", status="error", code=400)
 
         # Rate limiting
-        now = time.time()
+        now = datetime.utcnow().timestamp()
         timestamps = CONTACT_LOG.get(current_user.id, [])
         timestamps = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
 
@@ -169,21 +136,19 @@ class UserContact(Resource):
         test_email = os.getenv("RESEND_TEST_EMAIL")
         to_emails = [test_email.strip().lower()] if test_email else [recipient_email]
 
+        # Queue email task
         try:
             api_key = os.getenv("RESEND_API_KEY")
             from_email = os.getenv("RESEND_FROM")
+            send_email_task.delay(payload={
+                "from": from_email,
+                "to": to_emails,
+                "subject": data["subject"],
+                "text": data["message"],
+                "html": f"<p>{data['message']}</p>"
+            }, api_key=api_key)
         except Exception as e:
-            return make_response(message=f"Email service not configured: {e}", status="error", code=500)
-
-        payload = {
-            "from": from_email,
-            "to": to_emails,
-            "subject": data["subject"],
-            "text": data["message"],
-            "html": f"<p>{data['message']}</p>"
-        }
-
-        send_email_async(payload, api_key)
+            return make_response(message=f"Email queue failed: {e}", status="error", code=500)
 
         # Log to database
         audit = ContactAudit(
