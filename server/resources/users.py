@@ -1,7 +1,7 @@
 from flask import request, jsonify
 from flask_restful import Resource
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import User, db, ContactAudit
+from models import User, db, ContactAudit, EmailHistory
 import os
 from datetime import datetime
 from functools import wraps
@@ -47,6 +47,7 @@ class ContactSchema(Schema):
     subject = fields.Str(required=True)
     message = fields.Str(required=True)
     template_name = fields.Str(required=False)
+    schedule_at = fields.DateTime(required=False)  # optional scheduled send
 
 
 # -----------------------------
@@ -67,7 +68,7 @@ def render_email_template(template_name: str, message: str):
 # -----------------------------
 class UserList(Resource):
 
-    @role_required("admin", "recruiter")
+    @role_required("admin", "recruiter", "manager")
     def get(self):
         current_user = User.query.get(get_jwt_identity())
         page = int(request.args.get("page", 1))
@@ -130,7 +131,7 @@ class UserList(Resource):
 # -----------------------------
 class UserContact(Resource):
 
-    @role_required("admin", "recruiter")
+    @role_required("admin", "recruiter", "manager")
     def post(self, user_id: int):
         current_user = User.query.get(get_jwt_identity())
         user = User.query.get_or_404(user_id)
@@ -166,16 +167,44 @@ class UserContact(Resource):
         try:
             api_key = os.getenv("RESEND_API_KEY")
             from_email = os.getenv("RESEND_FROM")
-            send_email_task.delay(payload={
-                "from": from_email,
-                "to": to_emails,
-                "subject": data["subject"],
-                "text": data["message"],
-                "html": html_body
-            }, api_key=api_key)
+
+            schedule_at = data.get("schedule_at")
+            if schedule_at:
+                # Schedule via Celery eta
+                send_email_task.apply_async(
+                    args=[{
+                        "from": from_email,
+                        "to": to_emails,
+                        "subject": data["subject"],
+                        "text": data["message"],
+                        "html": html_body
+                    }, api_key],
+                    eta=schedule_at
+                )
+            else:
+                send_email_task.delay(payload={
+                    "from": from_email,
+                    "to": to_emails,
+                    "subject": data["subject"],
+                    "text": data["message"],
+                    "html": html_body
+                }, api_key=api_key)
         except Exception as e:
             return make_response(message=f"Email queue failed: {e}", status="error", code=500)
 
+        # Save to EmailHistory
+        email_history = EmailHistory(
+            sender_id=current_user.id,
+            recipient_id=user.id,
+            recipient_email=recipient_email,
+            subject=data["subject"],
+            template=data.get("template_name"),
+            scheduled_at=data.get("schedule_at"),
+            sent_at=None  # Will update when task completes
+        )
+        db.session.add(email_history)
+
+        # Save audit log
         audit = ContactAudit(
             sender_id=current_user.id,
             recipient_id=user.id,
@@ -186,8 +215,8 @@ class UserContact(Resource):
         db.session.add(audit)
         db.session.commit()
 
-        # Analytics hook for dashboard consumption
-        print(f"Analytics: user_contact_event sender={current_user.id} recipient={user.id} template={data.get('template_name')}")
+        # Analytics hook
+        print(f"Analytics: user_contact_event sender={current_user.id} recipient={user.id} template={data.get('template_name')} schedule={data.get('schedule_at')}")
 
         return make_response(message="Email queued successfully", data={"sent_to": len(to_emails)})
 
@@ -197,7 +226,7 @@ class UserContact(Resource):
 # -----------------------------
 class ContactLogs(Resource):
 
-    @role_required("admin", "recruiter")
+    @role_required("admin", "recruiter", "manager")
     def get(self):
         audits = ContactAudit.query.order_by(ContactAudit.timestamp.desc()).all()
         logs = [
@@ -238,7 +267,7 @@ class ReactivateUser(Resource):
 # -----------------------------
 class UserAnalytics(Resource):
 
-    @role_required("admin")
+    @role_required("admin", "manager")
     def get(self):
         total_users = User.query.count()
         active_users = User.query.filter(User.is_active == True).count()
@@ -247,11 +276,13 @@ class UserAnalytics(Resource):
         contacts_today = ContactAudit.query.filter(
             ContactAudit.timestamp >= datetime.utcnow().replace(hour=0, minute=0, second=0)
         ).count()
+        email_history_count = EmailHistory.query.count()
 
         return make_response(data={
             "total_users": total_users,
             "active_users": active_users,
             "inactive_users": inactive_users,
             "contacts_sent_total": contacts_sent,
-            "contacts_sent_today": contacts_today
+            "contacts_sent_today": contacts_today,
+            "emails_history_total": email_history_count
         }, message="Analytics summary")
