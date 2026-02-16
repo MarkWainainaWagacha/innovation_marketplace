@@ -1,26 +1,72 @@
-from flask import request
+from flask import request, jsonify
 from flask_restful import Resource
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from models import User, db
+from models import User, db, ContactAudit
 import os
 import requests
 import time
 from datetime import datetime
+from threading import Thread
+from functools import wraps
+from marshmallow import Schema, fields, ValidationError
 
 RESEND_API_URL = "https://api.resend.com/emails"
-
 CONTACT_LOG = {}
-CONTACT_AUDIT = []
-
 RATE_LIMIT_WINDOW = 60
 MAX_EMAILS_PER_WINDOW = 3
 
 
-def _require_env(name: str) -> str:
-    v = os.getenv(name)
-    if not v:
-        raise RuntimeError(f"Missing env var: {name}")
-    return v
+# -----------------------------
+# CENTRALIZED RESPONSE
+# -----------------------------
+def make_response(data=None, message="", status="success", code=200):
+    return jsonify({
+        "status": status,
+        "message": message,
+        "data": data or {}
+    }), code
+
+
+# -----------------------------
+# ROLE-BASED DECORATOR
+# -----------------------------
+def admin_required(func):
+    @wraps(func)
+    @jwt_required()
+    def wrapper(*args, **kwargs):
+        current_user = User.query.get(get_jwt_identity())
+        if not current_user or not current_user.is_admin:
+            return make_response(message="Admin access required", status="error", code=403)
+        return func(*args, **kwargs)
+    return wrapper
+
+
+# -----------------------------
+# MARSHMALLOW SCHEMAS
+# -----------------------------
+class ContactSchema(Schema):
+    subject = fields.Str(required=True)
+    message = fields.Str(required=True)
+
+
+# -----------------------------
+# BACKGROUND EMAIL SENDER
+# -----------------------------
+def send_email_async(payload, api_key):
+    def _send():
+        try:
+            requests.post(
+                RESEND_API_URL,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                timeout=20
+            )
+        except Exception as e:
+            print("Email send failed:", e)
+    Thread(target=_send).start()
 
 
 # -----------------------------
@@ -30,11 +76,9 @@ class UserList(Resource):
 
     @jwt_required()
     def get(self):
-        current_user_id = get_jwt_identity()
-        current_user = User.query.get(current_user_id)
-
+        current_user = User.query.get(get_jwt_identity())
         if not current_user:
-            return {"status": "error", "message": "User not found"}, 404
+            return make_response(message="User not found", status="error", code=404)
 
         page = int(request.args.get("page", 1))
         per_page = int(request.args.get("per_page", 10))
@@ -43,12 +87,9 @@ class UserList(Resource):
         include_inactive = request.args.get("include_inactive", "false").lower() == "true"
 
         query = User.query
-
-        # Show only active users unless admin explicitly asks
         if not include_inactive or not current_user.is_admin:
             query = query.filter(User.is_active == True)
 
-        # Search
         if search:
             query = query.filter(
                 (User.first_name.ilike(f"%{search}%")) |
@@ -56,172 +97,135 @@ class UserList(Resource):
                 (User.email.ilike(f"%{search}%"))
             )
 
-        # Sorting
         if hasattr(User, sort):
             query = query.order_by(getattr(User, sort))
 
         pagination = query.paginate(page=page, per_page=per_page, error_out=False)
 
-        return {
-            "status": "success",
+        users = [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email if current_user.is_admin else None,
+                "is_active": u.is_active if current_user.is_admin else None
+            }
+            for u in pagination.items
+        ]
+
+        return make_response(data={
             "total": pagination.total,
             "pages": pagination.pages,
             "current_page": page,
-            "users": [
-                {
-                    "id": u.id,
-                    "first_name": u.first_name,
-                    "last_name": u.last_name,
-                    "email": u.email if current_user.is_admin else None,
-                    "is_active": u.is_active if current_user.is_admin else None,
-                }
-                for u in pagination.items
-            ],
-        }, 200
+            "users": users
+        })
 
 
 # -----------------------------
-# CONTACT USER
+# USER CONTACT
 # -----------------------------
 class UserContact(Resource):
 
-    @jwt_required()
+    @admin_required
     def post(self, user_id: int):
-        current_user_id = get_jwt_identity()
-        current_user = User.query.get(current_user_id)
-
-        if not current_user:
-            return {"status": "error", "message": "User not found"}, 404
-
-        if current_user_id == user_id:
-            return {"status": "error", "message": "You cannot contact yourself"}, 400
-
-        if not current_user.is_admin:
-            return {"status": "error", "message": "Only admins can contact users"}, 403
-
+        current_user = User.query.get(get_jwt_identity())
         user = User.query.get_or_404(user_id)
 
+        if current_user.id == user_id:
+            return make_response(message="Cannot contact yourself", status="error", code=400)
         if not user.is_active:
-            return {"status": "error", "message": "Cannot contact inactive user"}, 400
+            return make_response(message="Cannot contact inactive user", status="error", code=400)
 
         # Rate limiting
         now = time.time()
-        timestamps = CONTACT_LOG.get(current_user_id, [])
+        timestamps = CONTACT_LOG.get(current_user.id, [])
         timestamps = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
 
         if len(timestamps) >= MAX_EMAILS_PER_WINDOW:
-            return {"status": "error", "message": "Rate limit exceeded"}, 429
-
+            return make_response(message="Rate limit exceeded", status="error", code=429)
         timestamps.append(now)
-        CONTACT_LOG[current_user_id] = timestamps
+        CONTACT_LOG[current_user.id] = timestamps
 
-        data = request.get_json() or {}
-        subject = (data.get("subject") or "").strip()
-        message = (data.get("message") or "").strip()
+        # Validate input
+        try:
+            data = ContactSchema().load(request.get_json() or {})
+        except ValidationError as err:
+            return make_response(message=str(err), status="error", code=400)
 
-        if not subject or not message:
-            return {"status": "error", "message": "Subject and message required"}, 400
-
-        recipient = (user.email or "").strip().lower()
-        if not recipient:
-            return {"status": "error", "message": "User has no email"}, 400
+        recipient_email = (user.email or "").strip().lower()
+        if not recipient_email:
+            return make_response(message="User has no email", status="error", code=400)
 
         test_email = os.getenv("RESEND_TEST_EMAIL")
-        to_emails = [test_email.strip().lower()] if test_email else [recipient]
+        to_emails = [test_email.strip().lower()] if test_email else [recipient_email]
 
         try:
-            api_key = _require_env("RESEND_API_KEY")
-            from_email = _require_env("RESEND_FROM")
+            api_key = os.getenv("RESEND_API_KEY")
+            from_email = os.getenv("RESEND_FROM")
         except Exception as e:
-            return {"status": "error", "message": str(e)}, 500
+            return make_response(message=f"Email service not configured: {e}", status="error", code=500)
 
         payload = {
             "from": from_email,
             "to": to_emails,
-            "subject": subject,
-            "text": message,
-            "html": f"<p>{message}</p>",
+            "subject": data["subject"],
+            "text": data["message"],
+            "html": f"<p>{data['message']}</p>"
         }
 
-        try:
-            r = requests.post(
-                RESEND_API_URL,
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=20,
-            )
-        except requests.RequestException as e:
-            return {"status": "error", "message": str(e)}, 502
+        # Send async
+        send_email_async(payload, api_key)
 
-        if r.status_code >= 400:
-            return {"status": "error", "message": "Email failed"}, 502
+        # Log to database
+        audit = ContactAudit(
+            sender_id=current_user.id,
+            recipient_id=user.id,
+            recipient_email=recipient_email,
+            subject=data["subject"],
+            timestamp=datetime.utcnow()
+        )
+        db.session.add(audit)
+        db.session.commit()
 
-        CONTACT_AUDIT.append({
-            "sender_id": current_user_id,
-            "recipient_id": user_id,
-            "recipient_email": recipient,
-            "subject": subject,
-            "timestamp": datetime.utcnow().isoformat()
-        })
-
-        return {"status": "success", "message": "Email sent"}, 200
+        return make_response(message="Email sent successfully", data={"sent_to": len(to_emails)})
 
 
 # -----------------------------
-# ADMIN: VIEW CONTACT LOGS
+# CONTACT LOGS
 # -----------------------------
 class ContactLogs(Resource):
 
-    @jwt_required()
+    @admin_required
     def get(self):
-        current_user = User.query.get(get_jwt_identity())
-
-        if not current_user or not current_user.is_admin:
-            return {"status": "error", "message": "Admin access required"}, 403
-
-        return {
-            "status": "success",
-            "total_logs": len(CONTACT_AUDIT),
-            "logs": CONTACT_AUDIT
-        }, 200
+        audits = ContactAudit.query.order_by(ContactAudit.timestamp.desc()).all()
+        logs = [
+            {
+                "sender_id": a.sender_id,
+                "recipient_id": a.recipient_id,
+                "recipient_email": a.recipient_email,
+                "subject": a.subject,
+                "timestamp": a.timestamp.isoformat()
+            } for a in audits
+        ]
+        return make_response(data={"total_logs": len(logs), "logs": logs})
 
 
 # -----------------------------
-# ADMIN: SOFT DELETE USER
+# DEACTIVATE / REACTIVATE USER
 # -----------------------------
 class DeactivateUser(Resource):
-
-    @jwt_required()
+    @admin_required
     def patch(self, user_id: int):
-        current_user = User.query.get(get_jwt_identity())
-
-        if not current_user or not current_user.is_admin:
-            return {"status": "error", "message": "Admin access required"}, 403
-
         user = User.query.get_or_404(user_id)
         user.is_active = False
         db.session.commit()
+        return make_response(message="User deactivated")
 
-        return {"status": "success", "message": "User deactivated"}, 200
 
-
-# -----------------------------
-# ADMIN: REACTIVATE USER
-# -----------------------------
 class ReactivateUser(Resource):
-
-    @jwt_required()
+    @admin_required
     def patch(self, user_id: int):
-        current_user = User.query.get(get_jwt_identity())
-
-        if not current_user or not current_user.is_admin:
-            return {"status": "error", "message": "Admin access required"}, 403
-
         user = User.query.get_or_404(user_id)
         user.is_active = True
         db.session.commit()
-
-        return {"status": "success", "message": "User reactivated"}, 200
+        return make_response(message="User reactivated")
