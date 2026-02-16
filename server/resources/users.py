@@ -5,14 +5,16 @@ from models import User
 import os
 import requests
 import time
+from datetime import datetime
 
 RESEND_API_URL = "https://api.resend.com/emails"
 
-# In-memory rate limiting store
-CONTACT_LOG = {}  # {sender_id: [timestamps]}
+# In-memory stores
+CONTACT_LOG = {}       # Rate limiting: {sender_id: [timestamps]}
+CONTACT_AUDIT = []     # Activity log list
 
-RATE_LIMIT_WINDOW = 60  # seconds
-MAX_EMAILS_PER_WINDOW = 3  # max emails per minute
+RATE_LIMIT_WINDOW = 60
+MAX_EMAILS_PER_WINDOW = 3
 
 
 def _require_env(name: str) -> str:
@@ -77,6 +79,7 @@ class UserContact(Resource):
     - Admin only
     - Prevent self-contact
     - Rate limited
+    - Logs contact activity
     """
 
     @jwt_required()
@@ -90,17 +93,14 @@ class UserContact(Resource):
         if current_user_id == user_id:
             return {"status": "error", "message": "You cannot contact yourself"}, 400
 
-        # Admin only restriction
         if not current_user.is_admin:
             return {"status": "error", "message": "Only admins can contact users"}, 403
 
         # --------------------------
-        # Rate Limiting Logic
+        # Rate Limiting
         # --------------------------
         now = time.time()
         timestamps = CONTACT_LOG.get(current_user_id, [])
-
-        # Keep only timestamps within window
         timestamps = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
 
         if len(timestamps) >= MAX_EMAILS_PER_WINDOW:
@@ -175,6 +175,18 @@ class UserContact(Resource):
                 "message": "Failed to send email",
                 "details": detail,
             }, 502
+
+        # --------------------------
+        # Activity Audit Logging
+        # --------------------------
+        CONTACT_AUDIT.append({
+            "sender_id": current_user_id,
+            "recipient_id": user_id,
+            "recipient_email": recipient,
+            "subject": subject,
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        # --------------------------
 
         return {
             "status": "success",
