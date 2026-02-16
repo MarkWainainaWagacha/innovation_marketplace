@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from functools import wraps
 from marshmallow import Schema, fields, ValidationError
-from tasks import send_email_task  # Celery/RQ task module
+from tasks import send_email_task
 
 CONTACT_LOG = {}
 RATE_LIMIT_WINDOW = 60
@@ -27,15 +27,17 @@ def make_response(data=None, message="", status="success", code=200):
 # -----------------------------
 # ROLE-BASED DECORATOR
 # -----------------------------
-def admin_required(func):
-    @wraps(func)
-    @jwt_required()
-    def wrapper(*args, **kwargs):
-        current_user = User.query.get(get_jwt_identity())
-        if not current_user or not current_user.is_admin:
-            return make_response(message="Admin access required", status="error", code=403)
-        return func(*args, **kwargs)
-    return wrapper
+def role_required(*roles):
+    def decorator(func):
+        @wraps(func)
+        @jwt_required()
+        def wrapper(*args, **kwargs):
+            current_user = User.query.get(get_jwt_identity())
+            if not current_user or current_user.role not in roles:
+                return make_response(message="Access denied", status="error", code=403)
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 # -----------------------------
@@ -44,6 +46,19 @@ def admin_required(func):
 class ContactSchema(Schema):
     subject = fields.Str(required=True)
     message = fields.Str(required=True)
+    template_name = fields.Str(required=False)  # optional template
+
+
+# -----------------------------
+# EMAIL TEMPLATE RENDER
+# -----------------------------
+def render_email_template(template_name: str, message: str):
+    templates = {
+        "welcome": f"<h1>Welcome</h1><p>{message}</p>",
+        "alert": f"<strong>Alert:</strong> {message}",
+        "default": f"<p>{message}</p>"
+    }
+    return templates.get(template_name, templates["default"])
 
 
 # -----------------------------
@@ -51,20 +66,19 @@ class ContactSchema(Schema):
 # -----------------------------
 class UserList(Resource):
 
-    @jwt_required()
+    @role_required("admin", "recruiter")
     def get(self):
         current_user = User.query.get(get_jwt_identity())
-        if not current_user:
-            return make_response(message="User not found", status="error", code=404)
-
         page = int(request.args.get("page", 1))
         per_page = int(request.args.get("per_page", 10))
         search = request.args.get("search", "").strip()
         sort = request.args.get("sort", "id")
         include_inactive = request.args.get("include_inactive", "false").lower() == "true"
+        role_filter = request.args.get("role", "").strip().lower()
+        joined_after = request.args.get("joined_after", None)
 
         query = User.query
-        if not include_inactive or not current_user.is_admin:
+        if not include_inactive:
             query = query.filter(User.is_active == True)
 
         if search:
@@ -73,6 +87,16 @@ class UserList(Resource):
                 (User.last_name.ilike(f"%{search}%")) |
                 (User.email.ilike(f"%{search}%"))
             )
+
+        if role_filter:
+            query = query.filter(User.role == role_filter)
+
+        if joined_after:
+            try:
+                date_obj = datetime.fromisoformat(joined_after)
+                query = query.filter(User.created_at >= date_obj)
+            except Exception:
+                pass
 
         if hasattr(User, sort):
             query = query.order_by(getattr(User, sort))
@@ -84,8 +108,10 @@ class UserList(Resource):
                 "id": u.id,
                 "first_name": u.first_name,
                 "last_name": u.last_name,
-                "email": u.email if current_user.is_admin else None,
-                "is_active": u.is_active if current_user.is_admin else None
+                "email": u.email if current_user.role == "admin" else None,
+                "is_active": u.is_active if current_user.role == "admin" else None,
+                "role": u.role,
+                "created_at": u.created_at.isoformat()
             }
             for u in pagination.items
         ]
@@ -103,7 +129,7 @@ class UserList(Resource):
 # -----------------------------
 class UserContact(Resource):
 
-    @admin_required
+    @role_required("admin", "recruiter")
     def post(self, user_id: int):
         current_user = User.query.get(get_jwt_identity())
         user = User.query.get_or_404(user_id)
@@ -113,7 +139,6 @@ class UserContact(Resource):
         if not user.is_active:
             return make_response(message="Cannot contact inactive user", status="error", code=400)
 
-        # Rate limiting
         now = datetime.utcnow().timestamp()
         timestamps = CONTACT_LOG.get(current_user.id, [])
         timestamps = [t for t in timestamps if now - t < RATE_LIMIT_WINDOW]
@@ -123,7 +148,6 @@ class UserContact(Resource):
         timestamps.append(now)
         CONTACT_LOG[current_user.id] = timestamps
 
-        # Validate input
         try:
             data = ContactSchema().load(request.get_json() or {})
         except ValidationError as err:
@@ -136,7 +160,8 @@ class UserContact(Resource):
         test_email = os.getenv("RESEND_TEST_EMAIL")
         to_emails = [test_email.strip().lower()] if test_email else [recipient_email]
 
-        # Queue email task
+        html_body = render_email_template(data.get("template_name"), data["message"])
+
         try:
             api_key = os.getenv("RESEND_API_KEY")
             from_email = os.getenv("RESEND_FROM")
@@ -145,12 +170,11 @@ class UserContact(Resource):
                 "to": to_emails,
                 "subject": data["subject"],
                 "text": data["message"],
-                "html": f"<p>{data['message']}</p>"
+                "html": html_body
             }, api_key=api_key)
         except Exception as e:
             return make_response(message=f"Email queue failed: {e}", status="error", code=500)
 
-        # Log to database
         audit = ContactAudit(
             sender_id=current_user.id,
             recipient_id=user.id,
@@ -161,6 +185,10 @@ class UserContact(Resource):
         db.session.add(audit)
         db.session.commit()
 
+        # Analytics hook (could be consumed by dashboard)
+        # Example: increment counter or log event
+        print(f"Analytics: user_contact_event sender={current_user.id} recipient={user.id}")
+
         return make_response(message="Email queued successfully", data={"sent_to": len(to_emails)})
 
 
@@ -169,7 +197,7 @@ class UserContact(Resource):
 # -----------------------------
 class ContactLogs(Resource):
 
-    @admin_required
+    @role_required("admin", "recruiter")
     def get(self):
         audits = ContactAudit.query.order_by(ContactAudit.timestamp.desc()).all()
         logs = [
@@ -188,16 +216,16 @@ class ContactLogs(Resource):
 # DEACTIVATE / REACTIVATE USER
 # -----------------------------
 class DeactivateUser(Resource):
-    @admin_required
+    @role_required("admin")
     def patch(self, user_id: int):
         user = User.query.get_or_404(user_id)
         user.is_active = False
         db.session.commit()
         return make_response(message="User deactivated")
-####
+
 
 class ReactivateUser(Resource):
-    @admin_required
+    @role_required("admin")
     def patch(self, user_id: int):
         user = User.query.get_or_404(user_id)
         user.is_active = True
