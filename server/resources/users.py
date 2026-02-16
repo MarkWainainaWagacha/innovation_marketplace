@@ -18,54 +18,48 @@ def _require_env(name: str) -> str:
 class UserList(Resource):
     @jwt_required()
     def get(self):
-        page = int(request.args.get("page", 1))
-        per_page = int(request.args.get("per_page", 10))
+        search = request.args.get("search", "").strip()
+        query = User.query
 
-        pagination = User.query.paginate(page=page, per_page=per_page, error_out=False)
+        if search:
+            query = query.filter(
+                (User.first_name.ilike(f"%{search}%")) |
+                (User.last_name.ilike(f"%{search}%")) |
+                (User.email.ilike(f"%{search}%"))
+            )
 
-        return {
-            "users": [
-                {
-                    "id": u.id,
-                    "first_name": u.first_name,
-                    "last_name": u.last_name,
-                    "email": u.email,
-                }
-                for u in pagination.items
-            ],
-            "total": pagination.total,
-            "pages": pagination.pages,
-            "current_page": page,
-        }, 200
+        users = query.all()
+
+        return [
+            {
+                "id": u.id,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "email": u.email,
+            }
+            for u in users
+        ], 200
 
 
 class UserContact(Resource):
     def post(self, user_id: int):
         user = User.query.get_or_404(user_id)
-
         data = request.get_json() or {}
-        subject = (data.get("subject") or "").strip()
-        message = (data.get("message") or "").strip()
+        subject = data.get("subject", "").strip()
+        message = data.get("message", "").strip()
 
         if not subject or not message:
-            return {"error": "Subject and message are required"}, 400
-
-        recipient = (user.email or "").strip().lower()
-        if not recipient:
-            return {"error": "This user has no email"}, 400
-
-        test_email = os.getenv("RESEND_TEST_EMAIL")
-        to_emails = [test_email.strip().lower()] if test_email else [recipient]
+            return {"error": "Subject and message required"}, 400
 
         try:
             api_key = _require_env("RESEND_API_KEY")
             from_email = _require_env("RESEND_FROM")
         except Exception as e:
-            return {"error": "Email service not configured", "details": str(e)}, 500
+            return {"error": str(e)}, 500
 
         payload = {
             "from": from_email,
-            "to": to_emails,
+            "to": [user.email],
             "subject": subject,
             "text": message,
         }
@@ -73,12 +67,11 @@ class UserContact(Resource):
         r = requests.post(
             RESEND_API_URL,
             json=payload,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            headers={"Authorization": f"Bearer {api_key}"},
             timeout=20,
         )
 
         if r.status_code >= 400:
-            try:
-                detail = r.json()
-            except Exception:
-                detail = {"message": r.text}
+            return {"error": "Email failed"}, 502
+
+        return {"ok": True}, 200
