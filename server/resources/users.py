@@ -18,26 +18,28 @@ def _require_env(name: str) -> str:
 class UserList(Resource):
     @jwt_required()
     def get(self):
-        users = User.query.all()
-        return [
-            {
-                "id": u.id,
-                "first_name": u.first_name,
-                "last_name": u.last_name,
-                "email": u.email,
-            }
-            for u in users
-        ], 200
+        page = int(request.args.get("page", 1))
+        per_page = int(request.args.get("per_page", 10))
+
+        pagination = User.query.paginate(page=page, per_page=per_page, error_out=False)
+
+        return {
+            "users": [
+                {
+                    "id": u.id,
+                    "first_name": u.first_name,
+                    "last_name": u.last_name,
+                    "email": u.email,
+                }
+                for u in pagination.items
+            ],
+            "total": pagination.total,
+            "pages": pagination.pages,
+            "current_page": page,
+        }, 200
 
 
 class UserContact(Resource):
-    """
-    POST /users/<user_id>/contact
-    Body: { "subject": "...", "message": "..." }
-
-    Sends an email to a single user via Resend (no mailto redirect).
-    """
-
     def post(self, user_id: int):
         user = User.query.get_or_404(user_id)
 
@@ -52,8 +54,6 @@ class UserContact(Resource):
         if not recipient:
             return {"error": "This user has no email"}, 400
 
-        # Resend testing mode fallback (optional)
-        # If set, ALL emails will go to this address only (useful until domain verification).
         test_email = os.getenv("RESEND_TEST_EMAIL")
         to_emails = [test_email.strip().lower()] if test_email else [recipient]
 
@@ -82,6 +82,3 @@ class UserContact(Resource):
                 detail = r.json()
             except Exception:
                 detail = {"message": r.text}
-            return {"error": "Failed to send email", "details": detail}, 502
-
-        return {"ok": True, "sent_to": len(to_emails)}, 200
