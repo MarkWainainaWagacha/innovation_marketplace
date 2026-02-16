@@ -11,7 +11,7 @@ RESEND_API_URL = "https://api.resend.com/emails"
 
 # In-memory stores
 CONTACT_LOG = {}       # Rate limiting: {sender_id: [timestamps]}
-CONTACT_AUDIT = []     # Activity log list
+CONTACT_AUDIT = []     # Contact activity logs
 
 RATE_LIMIT_WINDOW = 60
 MAX_EMAILS_PER_WINDOW = 3
@@ -74,7 +74,6 @@ class UserList(Resource):
 class UserContact(Resource):
     """
     POST /users/<user_id>/contact
-
     - JWT required
     - Admin only
     - Prevent self-contact
@@ -177,7 +176,7 @@ class UserContact(Resource):
             }, 502
 
         # --------------------------
-        # Activity Audit Logging
+        # Activity Logging
         # --------------------------
         CONTACT_AUDIT.append({
             "sender_id": current_user_id,
@@ -192,4 +191,25 @@ class UserContact(Resource):
             "status": "success",
             "message": "Email sent successfully",
             "sent_to": len(to_emails),
+        }, 200
+
+
+class ContactLogs(Resource):
+    """
+    GET /users/contact-logs
+    Admin-only endpoint to view contact activity
+    """
+
+    @jwt_required()
+    def get(self):
+        current_user_id = get_jwt_identity()
+        current_user = User.query.get(current_user_id)
+
+        if not current_user or not current_user.is_admin:
+            return {"status": "error", "message": "Admin access required"}, 403
+
+        return {
+            "status": "success",
+            "total_logs": len(CONTACT_AUDIT),
+            "logs": CONTACT_AUDIT
         }, 200
