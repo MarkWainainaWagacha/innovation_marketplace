@@ -14,6 +14,8 @@ RESEND_API_URL = "https://api.resend.com/emails"
 CONTACT_LOG = {}
 RATE_LIMIT_WINDOW = 60
 MAX_EMAILS_PER_WINDOW = 3
+EMAIL_RETRY_LIMIT = 3
+EMAIL_RETRY_DELAY = 5  # seconds
 
 
 # -----------------------------
@@ -50,23 +52,31 @@ class ContactSchema(Schema):
 
 
 # -----------------------------
-# BACKGROUND EMAIL SENDER
+# BACKGROUND EMAIL SENDER WITH RETRY
 # -----------------------------
+def send_email_with_retry(payload, api_key, retry_count=0):
+    try:
+        r = requests.post(
+            RESEND_API_URL,
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            timeout=20
+        )
+        if r.status_code >= 400:
+            raise Exception(f"HTTP {r.status_code}")
+    except Exception as e:
+        if retry_count < EMAIL_RETRY_LIMIT:
+            time.sleep(EMAIL_RETRY_DELAY)
+            send_email_with_retry(payload, api_key, retry_count + 1)
+        else:
+            print(f"Failed to send email after {EMAIL_RETRY_LIMIT} retries: {e}")
+
+
 def send_email_async(payload, api_key):
-    def _send():
-        try:
-            requests.post(
-                RESEND_API_URL,
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                timeout=20
-            )
-        except Exception as e:
-            print("Email send failed:", e)
-    Thread(target=_send).start()
+    Thread(target=send_email_with_retry, args=(payload, api_key)).start()
 
 
 # -----------------------------
@@ -173,7 +183,6 @@ class UserContact(Resource):
             "html": f"<p>{data['message']}</p>"
         }
 
-        # Send async
         send_email_async(payload, api_key)
 
         # Log to database
@@ -187,7 +196,7 @@ class UserContact(Resource):
         db.session.add(audit)
         db.session.commit()
 
-        return make_response(message="Email sent successfully", data={"sent_to": len(to_emails)})
+        return make_response(message="Email queued successfully", data={"sent_to": len(to_emails)})
 
 
 # -----------------------------
